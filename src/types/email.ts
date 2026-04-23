@@ -76,6 +76,7 @@ export const CATEGORY_CONFIG: Record<string, { label: string; bg: string; text: 
 };
 
 export function formatCategory(cat: string): { label: string; className: string } {
+  if (!cat) return { label: "Unknown", className: "bg-zinc-100 text-zinc-600" };
   const config = CATEGORY_CONFIG[cat];
   if (config) return { label: config.label, className: `${config.bg} ${config.text}` };
   // Fallback: capitalise, replace underscores
@@ -97,15 +98,15 @@ export const FYI_DOMAINS = [
 ];
 
 export function isUserInTo(email: Email): boolean {
-  return email.to.some(addr => addr.toLowerCase().includes(USER_DOMAIN));
+  return (email.to || []).some(addr => (addr || "").toLowerCase().includes(USER_DOMAIN));
 }
 
 export function isUserInCc(email: Email): boolean {
-  return (email.cc || []).some(addr => addr.toLowerCase().includes(USER_DOMAIN));
+  return (email.cc || []).some(addr => (addr || "").toLowerCase().includes(USER_DOMAIN));
 }
 
 export function isFyiEmail(email: Email): boolean {
-  const fromLower = email.from.toLowerCase();
+  const fromLower = (email.from || "").toLowerCase();
   const fromDomain = fromLower.split("@")[1] || "";
   if (FYI_SENDER_PATTERNS.some(p => fromLower.includes(p))) return true;
   if (FYI_DOMAINS.some(d => fromDomain.includes(d))) return true;
@@ -134,6 +135,7 @@ export function stripHtml(html: string): string {
 }
 
 export function detectRefs(text: string): string[] {
+  if (!text) return [];
   const refs: string[] = [];
   const cwRefs = text.match(/\b[A-Z]{2}\d{8}\b/g);
   if (cwRefs) refs.push(...cwRefs);
