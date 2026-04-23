@@ -213,6 +213,7 @@ function MissingInfoChecklist({ items, onDraft }: { items: string[]; onDraft?: (
 
 // Simple markdown: **bold**, *italic*, - bullets
 function renderMarkdown(text: string): string {
+  if (!text) return "";
   // Escape HTML first to prevent injection
   let html = text
     .replace(/&/g, "&amp;")
@@ -371,7 +372,7 @@ function AiBubble({ msg }: { msg: ConversationMessage }) {
           )}
         </div>
         <div className="bg-zinc-50 border border-zinc-200 px-4 py-2.5 rounded-2xl rounded-tr-sm">
-          <div className="text-xs leading-relaxed text-zinc-700" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
+          <div className="text-xs leading-relaxed text-zinc-700" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content || "") }} />
           {msg.structured_data && (
             <div className="bg-white rounded-lg p-2.5 mt-2 space-y-1">
               {Object.entries(msg.structured_data).map(([k, v]) => (
@@ -387,7 +388,7 @@ function AiBubble({ msg }: { msg: ConversationMessage }) {
             <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-zinc-200">
               {msg.reply_options.map((opt, i) => {
                 // Show just the body (skip greeting, sign-off) as a one-line preview
-                const lines = opt.split("\n").filter(l => l.trim());
+                const lines = (opt || "").split("\n").filter(l => l.trim());
                 const body = lines.find(l => !l.startsWith("Hi ") && !l.startsWith("Dear ") && l !== "Kind regards" && l !== "Best regards" && l !== "Thanks" && l !== "Regards") || lines[1] || opt;
                 return (
                   <button key={i} onClick={() => msg.onReplyOptionClick?.(opt)}

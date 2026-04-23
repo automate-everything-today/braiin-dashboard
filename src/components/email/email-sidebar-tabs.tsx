@@ -264,11 +264,11 @@ function BraiinTab({
             <div className="flex flex-wrap gap-1 pt-1 border-t">
               {cls.reply_options.map((opt: string, i: number) => (
                 <button key={i} onClick={() => {
-                    const html = opt.split(/\n\n+/).map((p: string) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
+                    const html = (opt || "").split(/\n\n+/).map((p: string) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
                     replyBarRef.current?.setContent(html);
                   }}
                   className="px-2 py-0.5 bg-white border rounded text-[9px] hover:bg-zinc-100 whitespace-nowrap">
-                  {opt.split("\n")[0].slice(0, 40)}{opt.length > 40 ? "..." : ""}
+                  {(opt || "").split("\n")[0].slice(0, 40)}{(opt || "").length > 40 ? "..." : ""}
                 </button>
               ))}
             </div>
