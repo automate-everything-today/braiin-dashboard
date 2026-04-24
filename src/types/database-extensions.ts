@@ -36,6 +36,86 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Migration: 009_reply_learnings.sql
+      reply_learnings: {
+        Row: {
+          id: number;
+          user_email: string;
+          sender_domain: string | null;
+          sender_email: string | null;
+          category: string | null;
+          instruction: string;
+          reply_options: unknown;
+          created_at: string;
+          last_used_at: string | null;
+          usage_count: number;
+        };
+        Insert: {
+          id?: number;
+          user_email: string;
+          sender_domain?: string | null;
+          sender_email?: string | null;
+          category?: string | null;
+          instruction: string;
+          reply_options: unknown;
+          created_at?: string;
+          last_used_at?: string | null;
+          usage_count?: number;
+        };
+        Update: {
+          id?: number;
+          user_email?: string;
+          sender_domain?: string | null;
+          sender_email?: string | null;
+          category?: string | null;
+          instruction?: string;
+          reply_options?: unknown;
+          created_at?: string;
+          last_used_at?: string | null;
+          usage_count?: number;
+        };
+        Relationships: [];
+      };
+      // Migration: 010_reply_rules.sql
+      reply_rules: {
+        Row: {
+          id: number;
+          scope_type: "user" | "category" | "mode" | "department" | "branch" | "global";
+          scope_value: string;
+          instruction: string;
+          source: "learned" | "set";
+          created_by: string | null;
+          active: boolean;
+          usage_count: number;
+          created_at: string;
+          last_used_at: string | null;
+        };
+        Insert: {
+          id?: number;
+          scope_type: "user" | "category" | "mode" | "department" | "branch" | "global";
+          scope_value: string;
+          instruction: string;
+          source?: "learned" | "set";
+          created_by?: string | null;
+          active?: boolean;
+          usage_count?: number;
+          created_at?: string;
+          last_used_at?: string | null;
+        };
+        Update: {
+          id?: number;
+          scope_type?: "user" | "category" | "mode" | "department" | "branch" | "global";
+          scope_value?: string;
+          instruction?: string;
+          source?: "learned" | "set";
+          created_by?: string | null;
+          active?: boolean;
+          usage_count?: number;
+          created_at?: string;
+          last_used_at?: string | null;
+        };
+        Relationships: [];
+      };
     };
     Views: PublicSchema["Views"];
     Functions: PublicSchema["Functions"];

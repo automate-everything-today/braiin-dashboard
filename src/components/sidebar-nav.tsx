@@ -4,12 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   TrendingUp, Brain, Users, Lightbulb, Target,
-  Sparkles, Phone, LayoutDashboard, Activity, BarChart3, Trophy, UserCog, Shield, Settings, Kanban, CheckSquare, Mail, MessageSquare, AlertTriangle,
+  Sparkles, Phone, LayoutDashboard, Activity, BarChart3, Trophy, UserCog, Shield, Settings, Kanban, CheckSquare, Mail, MessageSquare, AlertTriangle, GitBranch,
 } from "lucide-react";
 
 const nav = [
   { href: "/pipeline", label: "Pipeline", icon: Kanban },
   { href: "/email", label: "Email", icon: Mail },
+  { href: "/stages", label: "Stages", icon: GitBranch },
   { href: "/messages", label: "Messages", icon: MessageSquare },
   { href: "/incidents", label: "Incidents", icon: AlertTriangle },
   { href: "/tasks", label: "Tasks", icon: CheckSquare },

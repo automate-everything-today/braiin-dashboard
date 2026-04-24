@@ -32,6 +32,14 @@ import { useEmailActions } from "@/hooks/use-email-actions";
 import { TriageTrainer } from "@/components/email/triage-trainer";
 import { useSenderIntel } from "@/hooks/use-sender-intel";
 import { useEmailClassify } from "@/hooks/use-email-classify";
+import {
+  CONVERSATION_STAGES,
+  STAGE_LABEL,
+  STAGE_STYLE,
+  STAGE_DESCRIPTION,
+  isConversationStage,
+  type ConversationStage,
+} from "@/lib/conversation-stages";
 import { buildEmailSidebarTabs } from "@/components/email/email-sidebar-tabs";
 import { EmailHeader } from "@/components/email/email-header";
 import { ComposePanel } from "@/components/email/compose-panel";
@@ -56,6 +64,33 @@ const CACHE_STALE_MS = 60 * 1000; // 1 minute - beyond this, refresh on focus
 
 function cacheKey(folder: string, inboxId: number | null): string {
   return `${folder}:${inboxId ?? ""}`;
+}
+
+/**
+ * Reply-All CC = dedupe(original To + original CC) - the current user -
+ * the original sender. Keeps internal colleagues (they usually SHOULD
+ * stay copied on the reply) and just strips the recipient of this reply
+ * (the sender) plus the user themselves (no self-CC).
+ */
+function computeReplyAllCc(
+  email: { from?: string | null; to?: string[] | null; cc?: string[] | null } | null,
+  userEmail: string,
+): string[] {
+  if (!email) return [];
+  const pool = [...(email.to || []), ...(email.cc || [])];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const sender = (email.from || "").trim().toLowerCase();
+  const self = (userEmail || "").trim().toLowerCase();
+  for (const raw of pool) {
+    const trimmed = (raw || "").trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (key === sender || key === self || seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 export default function EmailPage() {
@@ -111,10 +146,36 @@ export default function EmailPage() {
   // Custom hooks
   const { senderIntel, loadSenderIntel } = useSenderIntel();
   const {
-    classifications, classifyingId, feedbackModal, feedbackText, feedbackRatings,
+    classifications, setClassifications,
+    classifyingId, feedbackModal, feedbackText, feedbackRatings,
     setFeedbackText, setFeedbackModal, setFeedbackRatings,
     classifyEmail, rateClassification, submitFeedback,
+    hydrateClassifications, backfillMissingMetadata,
   } = useEmailClassify();
+
+  // Hydrate classification state from the DB whenever the email list changes
+  // so category badges, tag chips, stage pills, quote indicators etc. are
+  // visible immediately on page load - not only after re-classifying in the
+  // current session.
+  //
+  // After hydrate, kick off a background backfill for any rows that came
+  // back without a stage or tags (legacy rows classified before migrations
+  // 012/013). The backfill re-classifies sequentially with a 200ms gap
+  // between calls so the rate limiter never fires, and updates state as
+  // each completes - stage pills and tag chips light up live in the UI.
+  useEffect(() => {
+    if (!emails.length) return;
+    const ids = emails.map((e) => e.id).filter(Boolean);
+    if (ids.length === 0) return;
+    (async () => {
+      const hydrated = await hydrateClassifications(ids);
+      void backfillMissingMetadata(emails, hydrated);
+    })();
+    // Only fire when the set of visible email ids changes. Stringify keeps
+    // the dep stable even when the emails array is re-created with the same
+    // ids by an upstream refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emails.map((e) => e.id).join("|")]);
 
   const emailActions = useEmailActions({
     selected, senderIntel, emailTags, tagParty, actionNote,
@@ -522,13 +583,19 @@ export default function EmailPage() {
     setReplyType(type);
     if (type === "forward") {
       setCompose({ to: "", subject: `Fwd: ${selected.subject}`, body: `\n\n---------- Forwarded message ----------\nFrom: ${selected.fromName} (${selected.from})\nDate: ${new Date(selected.date).toLocaleDateString("en-GB")}\nSubject: ${selected.subject}\n\n${selected.preview}`, cc: "" });
+      replyBarRef.current?.setCc([]);
     } else {
+      const cc = type === "replyall" ? computeReplyAllCc(selected, userEmail) : [];
       setCompose({
         to: selected.from,
         subject: `Re: ${selected.subject}`,
         body: "",
-        cc: type === "replyall" ? [...selected.to, ...(selected.cc || [])].filter(e => !isInternalEmail(e) && e !== selected.from).join(", ") : "",
+        cc: cc.join(", "),
       });
+      // Push the computed CC list through to the ReplyBar. Reply clears CC;
+      // Reply-All preserves everyone copied on the original thread (including
+      // colleagues) minus the user and the original sender.
+      replyBarRef.current?.setCc(cc);
     }
     setShowReply(true);
   }
@@ -813,6 +880,18 @@ export default function EmailPage() {
         const cat = formatCategory(classifications[email.id].category);
         badges.push({ label: cat.label, color: cat.className });
       }
+      // Thread stage pill: effective stage (user override beats AI). Colour
+      // from the shared STAGE_STYLE palette so a given stage looks the same
+      // everywhere (list card, AI bubble, dashboard column header).
+      const stageCode = classifications[email.id]?.effective_conversation_stage
+        ?? classifications[email.id]?.ai_conversation_stage
+        ?? null;
+      if (isConversationStage(stageCode)) {
+        badges.push({
+          label: STAGE_LABEL[stageCode],
+          color: STAGE_STYLE[stageCode],
+        });
+      }
       if (thread.count > 1) badges.push({ label: `${thread.count}`, color: "bg-zinc-200 text-zinc-600" });
       const tags = emailTags[email.id] || [];
       for (const t of tags) {
@@ -1030,6 +1109,127 @@ export default function EmailPage() {
           setFeedbackRatings(prev => ({ ...prev, [selected.id]: rating }));
           rateClassification(selected.id, rating);
           if (context) submitFeedback(selected.id, undefined);
+        },
+        aiTags: cls.ai_tags || [],
+        userTags: cls.user_tags ?? null,
+        relevanceThumbs: cls.relevance_feedback || null,
+        onTagsChange: async (nextTags: string[] | null) => {
+          const prevCls = cls;
+          // Optimistic update
+          setClassifications((prev: Record<string, any>) => ({
+            ...prev,
+            [selected.id]: {
+              ...(prev[selected.id] || {}),
+              user_tags: nextTags,
+              effective_tags: nextTags && nextTags.length > 0 ? nextTags : (prev[selected.id]?.ai_tags || []),
+            },
+          }));
+          try {
+            const res = await fetch("/api/classify-email", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email_id: selected.id, user_tags: nextTags }),
+            });
+            if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+          } catch (e: unknown) {
+            // Rollback
+            setClassifications((prev: Record<string, any>) => ({
+              ...prev,
+              [selected.id]: { ...(prev[selected.id] || {}), user_tags: prevCls.user_tags ?? null },
+            }));
+            toast.error(`Tag update failed: ${e instanceof Error ? e.message : "unknown error"}`);
+          }
+        },
+        aiConversationStage: cls.ai_conversation_stage ?? null,
+        userConversationStage: cls.user_conversation_stage ?? null,
+        onStageChange: async (next: string | null) => {
+          const prevUser = cls.user_conversation_stage ?? null;
+          const prevAi = cls.ai_conversation_stage ?? null;
+          setClassifications((prev: Record<string, any>) => ({
+            ...prev,
+            [selected.id]: {
+              ...(prev[selected.id] || {}),
+              user_conversation_stage: next,
+              effective_conversation_stage: next ?? prevAi,
+            },
+          }));
+          try {
+            const res = await fetch("/api/classify-email", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email_id: selected.id, user_conversation_stage: next }),
+            });
+            if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+          } catch (e: unknown) {
+            setClassifications((prev: Record<string, any>) => ({
+              ...prev,
+              [selected.id]: {
+                ...(prev[selected.id] || {}),
+                user_conversation_stage: prevUser,
+                effective_conversation_stage: prevUser ?? prevAi,
+              },
+            }));
+            toast.error(`Stage update failed: ${e instanceof Error ? e.message : "unknown error"}`);
+          }
+        },
+        onRelevanceThumbsUp: async () => {
+          const prevFeedback = cls.relevance_feedback;
+          setClassifications((prev: Record<string, any>) => ({
+            ...prev,
+            [selected.id]: { ...(prev[selected.id] || {}), relevance_feedback: "thumbs_up" },
+          }));
+          try {
+            const res = await fetch("/api/classify-email", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email_id: selected.id, relevance_feedback: "thumbs_up" }),
+            });
+            if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+          } catch (e: unknown) {
+            setClassifications((prev: Record<string, any>) => ({
+              ...prev,
+              [selected.id]: { ...(prev[selected.id] || {}), relevance_feedback: prevFeedback ?? null },
+            }));
+            toast.error(`Save failed: ${e instanceof Error ? e.message : "unknown error"}`);
+          }
+        },
+        onRefineReplies: async (instruction: string) => {
+          try {
+            const res = await fetch("/api/refine-replies", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                email_id: selected.id,
+                instruction,
+                subject: selected.subject,
+                from_email: selected.from,
+                from_name: selected.fromName,
+                preview: selected.preview,
+                body: selected.body,
+              }),
+            });
+            if (!res.ok) {
+              const errBody = await res.json().catch(() => ({}));
+              toast.error(`Refine failed: ${errBody.error || res.statusText}`);
+              return;
+            }
+            const data = await res.json();
+            if (Array.isArray(data.reply_options) && data.reply_options.length > 0) {
+              // Update the classifications state so the bubble re-renders
+              // with the refined reply chips.
+              setClassifications((prev: Record<string, any>) => ({
+                ...prev,
+                [selected.id]: {
+                  ...(prev[selected.id] || {}),
+                  reply_options: data.reply_options,
+                },
+              }));
+              toast.success("Replies refined");
+            }
+          } catch (err) {
+            console.error("[refine-replies] network error:", err);
+            toast.error("Refine failed - network error");
+          }
         },
         onRaiseIncident: () => { setShowIncidentForm(true); },
         // Triage recommendations based on category
@@ -1322,7 +1522,15 @@ export default function EmailPage() {
   );
 
   const replyBarElement = selected && !showCompose ? (
-    <ReplyBar ref={replyBarRef} defaultChannel="email" onSend={handleReplySend} contextLabel={selected.fromName || selected.from} defaultTo={selected.from} defaultSubject={`Re: ${selected.subject}`} defaultCc={(selected.cc || []).filter((e: string) => !isInternalEmail(e))} />
+    <ReplyBar
+      ref={replyBarRef}
+      defaultChannel="email"
+      onSend={handleReplySend}
+      contextLabel={selected.fromName || selected.from}
+      defaultTo={selected.from}
+      defaultSubject={`Re: ${selected.subject}`}
+      defaultCc={computeReplyAllCc(selected, userEmail)}
+    />
   ) : null;
 
   return (

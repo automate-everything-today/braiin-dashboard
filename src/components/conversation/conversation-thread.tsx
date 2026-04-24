@@ -3,6 +3,9 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { ConversationMessage } from "@/types";
+import { RelevanceTagChips } from "@/components/email/relevance-tags";
+import { ConversationStagePicker } from "@/components/email/conversation-stage-picker";
+import { isConversationStage, type ConversationStage } from "@/lib/conversation-stages";
 
 // Exported for testing
 export function formatMessageTime(timestamp: string): string {
@@ -111,6 +114,20 @@ function HtmlIframe({ html, emailId }: { html: string; emailId?: string }) {
   const onLoad = useCallback(() => {
     const doc = iframeRef.current?.contentDocument;
     if (doc) {
+      // Force every link to open in a new browser tab. Without this a click
+      // loads the destination INSIDE the iframe, wiping the email. We also
+      // belt-and-braces mark individual anchors because some HTML emails
+      // render links as JS onclick handlers or pseudo-buttons.
+      if (!doc.head.querySelector('base[target="_blank"]')) {
+        const base = doc.createElement("base");
+        base.setAttribute("target", "_blank");
+        doc.head.insertBefore(base, doc.head.firstChild);
+      }
+      doc.querySelectorAll("a[href]").forEach((a) => {
+        a.setAttribute("target", "_blank");
+        a.setAttribute("rel", "noopener noreferrer");
+      });
+
       const style = doc.createElement("style");
       style.textContent = "body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 13px; color: #3f3f46; margin: 0; padding: 0; overflow-x: hidden; } img { max-width: 100%; height: auto; } table { max-width: 100%; } a { color: #2563eb; }";
       doc.head.appendChild(style);
@@ -119,13 +136,36 @@ function HtmlIframe({ html, emailId }: { html: string; emailId?: string }) {
     }
   }, []);
 
+  function openInBrowser() {
+    // Blob URL renders the full HTML in its own tab at full height, with
+    // working links, as though opened in a standalone webmail window. Tab
+    // keeps the blob URL until closed; browsers revoke it on tab close.
+    const blob = new Blob([resolvedHtml], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener,noreferrer");
+    // Free the URL after a delay so the new tab has time to load it.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
+
   return (
     <div>
+      <div className="flex justify-end mb-1">
+        <button
+          onClick={openInBrowser}
+          className="text-[9px] text-zinc-400 hover:text-zinc-600 underline"
+          title="Open this HTML email in a new browser tab"
+        >
+          Open in browser
+        </button>
+      </div>
       <iframe
         ref={iframeRef}
         srcDoc={resolvedHtml}
         onLoad={onLoad}
-        sandbox="allow-same-origin"
+        // allow-popups lets target="_blank" actually open a new tab; without
+        // it the browser silently swallows the click. allow-popups-to-escape
+        // -sandbox keeps the opened page unsandboxed so external sites work.
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         className="w-full border-0 rounded-lg bg-white"
         style={{ height: `${height}px` }}
       />
@@ -269,6 +309,12 @@ function IncomingBubble({ msg }: { msg: ConversationMessage }) {
               {showHtml ? "Text" : "HTML"}
             </button>
           )}
+          {!showHtml && isLong && (
+            <button onClick={() => setExpanded(!expanded)}
+              className="text-[9px] text-zinc-400 hover:text-zinc-600 underline">
+              {expanded ? "Collapse" : "Expand"}
+            </button>
+          )}
         </div>
         <div className={`bg-white border border-zinc-200 py-2.5 rounded-2xl rounded-tl-sm ${showHtml ? "px-2" : "px-4"}`}>
           {showHtml && msg.htmlBody ? (
@@ -351,6 +397,20 @@ function SystemBubble({ msg }: { msg: ConversationMessage }) {
 function AiBubble({ msg }: { msg: ConversationMessage }) {
   const [feedbackContext, setFeedbackContext] = useState("");
   const [showFeedbackInput, setShowFeedbackInput] = useState(false);
+  const [refineInput, setRefineInput] = useState("");
+  const [refining, setRefining] = useState(false);
+
+  async function submitRefine() {
+    const text = refineInput.trim();
+    if (!text || !msg.onRefineReplies || refining) return;
+    setRefining(true);
+    try {
+      await msg.onRefineReplies(text);
+      setRefineInput("");
+    } finally {
+      setRefining(false);
+    }
+  }
 
   return (
     <div className="flex justify-end gap-2 mb-3">
@@ -373,6 +433,24 @@ function AiBubble({ msg }: { msg: ConversationMessage }) {
         </div>
         <div className="bg-zinc-50 border border-zinc-200 px-4 py-2.5 rounded-2xl rounded-tr-sm">
           <div className="text-xs leading-relaxed text-zinc-700" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content || "") }} />
+          {(msg.aiTags || msg.userTags || msg.onTagsChange || msg.onStageChange) && (
+            <div className="mt-2 pt-2 border-t border-zinc-200 flex items-center gap-2 flex-wrap">
+              <RelevanceTagChips
+                aiTags={msg.aiTags || []}
+                userTags={msg.userTags ?? null}
+                relevanceThumbs={msg.relevanceThumbs}
+                onChange={msg.onTagsChange}
+                onThumbsUp={msg.onRelevanceThumbsUp}
+              />
+              {msg.onStageChange && (
+                <ConversationStagePicker
+                  aiStage={isConversationStage(msg.aiConversationStage) ? (msg.aiConversationStage as ConversationStage) : null}
+                  userStage={isConversationStage(msg.userConversationStage) ? (msg.userConversationStage as ConversationStage) : null}
+                  onChange={(next) => msg.onStageChange?.(next)}
+                />
+              )}
+            </div>
+          )}
           {msg.structured_data && (
             <div className="bg-white rounded-lg p-2.5 mt-2 space-y-1">
               {Object.entries(msg.structured_data).map(([k, v]) => (
@@ -397,6 +475,30 @@ function AiBubble({ msg }: { msg: ConversationMessage }) {
                   </button>
                 );
               })}
+            </div>
+          )}
+          {/* Refine replies input - rewrites the 3 suggestions to match
+              the user's instruction (e.g. "make it more direct", "ask for
+              a discount"). Only shown when there are replies to refine. */}
+          {msg.reply_options && msg.reply_options.length > 0 && msg.onRefineReplies && (
+            <div className="mt-2 pt-2 border-t border-zinc-200">
+              <div className="flex gap-1 items-center">
+                <input
+                  value={refineInput}
+                  onChange={(e) => setRefineInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !refining) submitRefine(); }}
+                  disabled={refining}
+                  placeholder="Refine replies - e.g. more direct, ask for discount, shorter..."
+                  className="flex-1 px-2.5 py-1 border border-zinc-200 rounded-full text-[10px] bg-white focus:outline-none focus:border-zinc-400 disabled:bg-zinc-50"
+                />
+                <button
+                  onClick={submitRefine}
+                  disabled={refining || !refineInput.trim()}
+                  className="px-2.5 py-1 bg-zinc-900 text-white rounded-full text-[10px] disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {refining ? "..." : "Refine"}
+                </button>
+              </div>
             </div>
           )}
           {/* Incident detection - removed from here, shown as permanent banner below bubble */}

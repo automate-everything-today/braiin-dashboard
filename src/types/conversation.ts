@@ -18,8 +18,14 @@ export interface ConversationMessage {
   attachments?: { name: string; size: string; url: string; type: string }[];
   is_read?: boolean;
   reply_options?: string[];
+  // Additional reply drafts surfaced from past refinements on similar
+  // emails (same sender domain or category). Each entry includes the
+  // original user instruction so the UI can show a hint and a learningId
+  // used to record usage when clicked.
+  learned_reply_options?: { reply: string; instruction: string; learningId: number }[];
   incident_detected?: { severity: string; category: string; title: string; confidence: number };
   onReplyOptionClick?: (reply: string) => void;
+  onLearnedReplyClick?: (reply: string, learningId: number) => void;
   onFeedback?: (rating: "good" | "bad", context?: string) => void;
   onRaiseIncident?: () => void;
   onReply?: (content: string) => void;
@@ -32,6 +38,22 @@ export interface ConversationMessage {
   actions?: { id: string; label: string; icon: string; onClick?: () => void }[];
   missingInfo?: string[];
   onMissingInfoDraft?: (selectedItems: string[]) => void;
+  onRefineReplies?: (instruction: string) => Promise<void> | void;
+  // Relevance tags detected by Claude (ai_tags) and the user's manual
+  // override (user_tags). effective_tags is the runtime-resolved set
+  // (override if set, else ai). thumbs is optional positive reinforcement
+  // on the AI's tagging for the current email.
+  aiTags?: string[];
+  userTags?: string[] | null;
+  relevanceThumbs?: "thumbs_up" | "thumbs_down" | null;
+  onTagsChange?: (nextTags: string[] | null) => Promise<void> | void;
+  onRelevanceThumbsUp?: () => Promise<void> | void;
+  // Thread lifecycle stage. aiStage comes from Claude; userStage is the
+  // manual override and wins when set. onStageChange persists the
+  // override via PUT /api/classify-email.
+  aiConversationStage?: string | null;
+  userConversationStage?: string | null;
+  onStageChange?: (next: string | null) => Promise<void> | void;
 }
 
 export interface Channel {

@@ -41,6 +41,7 @@ export type ReplyBarHandle = {
   getContent: () => string;
   getText: () => string;
   clear: () => void;
+  setCc: (emails: string[]) => void;
 };
 
 export const ReplyBar = forwardRef<ReplyBarHandle, Props>(function ReplyBar({ channels = DEFAULT_CHANNELS, defaultChannel = "email", onSend, disabled, contextLabel, defaultTo, defaultSubject, defaultCc }: Props, ref) {
@@ -150,6 +151,23 @@ export const ReplyBar = forwardRef<ReplyBarHandle, Props>(function ReplyBar({ ch
       setIsEmpty(true);
       setOriginalSuggestion(null);
       setSuggestionType(null);
+    },
+    setCc: (emails: string[]) => {
+      // Dedupe + normalise whitespace; ReplyBar expects already-filtered
+      // values (callers remove self + sender).
+      const seen = new Set<string>();
+      const next: string[] = [];
+      for (const raw of emails || []) {
+        const trimmed = (raw || "").trim();
+        if (!trimmed) continue;
+        const key = trimmed.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        next.push(trimmed);
+      }
+      setCcEmails(next);
+      // Auto-expand so the user can see the CC list they're about to send to.
+      if (next.length > 0) setExpanded(true);
     },
   }), [editor]);
 
