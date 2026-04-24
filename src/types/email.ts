@@ -37,7 +37,7 @@ export type SenderIntel = {
   accountHealth: string;
 };
 
-export type EmailFilter = "all" | "direct" | "action" | "cc" | "fyi" | "pinned" | "snoozed" | "mine" | "unassigned";
+export type EmailFilter = "all" | "direct" | "action" | "cc" | "fyi" | "marketing" | "pinned" | "snoozed" | "mine" | "unassigned";
 
 export type TagInfo = { tag: string; party: string | null; is_primary: boolean };
 
@@ -97,12 +97,29 @@ export const FYI_DOMAINS = [
   "sendinblue.com", "brevo.com", "klaviyo.com",
 ];
 
-export function isUserInTo(email: Email): boolean {
-  return (email.to || []).some(addr => (addr || "").toLowerCase().includes(USER_DOMAIN));
+/**
+ * True if the logged-in user's address is in the To: list.
+ * Falls back to the customer's email domain when userEmail is not provided -
+ * that's the old behaviour and treats every internal-addressed email as
+ * "direct to me", which is wrong when a shared mailbox has multiple staff on
+ * the To: line. Always pass userEmail at the call site.
+ */
+export function isUserInTo(email: Email, userEmail?: string): boolean {
+  const list = (email.to || []).map((a) => (a || "").toLowerCase());
+  if (userEmail) {
+    const me = userEmail.toLowerCase();
+    return list.includes(me);
+  }
+  return list.some((addr) => addr.includes(USER_DOMAIN));
 }
 
-export function isUserInCc(email: Email): boolean {
-  return (email.cc || []).some(addr => (addr || "").toLowerCase().includes(USER_DOMAIN));
+export function isUserInCc(email: Email, userEmail?: string): boolean {
+  const list = (email.cc || []).map((a) => (a || "").toLowerCase());
+  if (userEmail) {
+    const me = userEmail.toLowerCase();
+    return list.includes(me);
+  }
+  return list.some((addr) => addr.includes(USER_DOMAIN));
 }
 
 export function isFyiEmail(email: Email): boolean {
@@ -110,6 +127,45 @@ export function isFyiEmail(email: Email): boolean {
   const fromDomain = fromLower.split("@")[1] || "";
   if (FYI_SENDER_PATTERNS.some(p => fromLower.includes(p))) return true;
   if (FYI_DOMAINS.some(d => fromDomain.includes(d))) return true;
+  return false;
+}
+
+// Narrow set of marketing-specific indicators. FYI_SENDER_PATTERNS is broader
+// (covers noreply, support@, notifications@ which aren't really marketing), so
+// we use a tighter subset here for the Marketing tab heuristic fallback.
+const MARKETING_SENDER_PATTERNS = [
+  "newsletter", "marketing", "campaign", "promo", "offers", "deals",
+  "unsubscribe",
+];
+
+const MARKETING_DOMAINS = [
+  "mailchimp.com", "hubspot.com", "sendgrid.net", "mailgun.org",
+  "constantcontact.com", "campaign-archive.com", "createsend.com",
+  "marketo.com", "pardot.com", "sendinblue.com", "brevo.com",
+  "klaviyo.com", "mailerlite.com",
+];
+
+/**
+ * True if the email is marketing. Prefers the AI classification when one is
+ * available (accurate). Falls back to narrow heuristics on sender patterns
+ * and known marketing-tool domains (fast, works before classification runs).
+ *
+ * Second signal: the email carries a List-Unsubscribe header (unsubscribeUrl).
+ * RFC 8058 mail only ships that header on bulk/marketing sends.
+ */
+export function isMarketingEmail(
+  email: Email,
+  classificationCategory?: string | null,
+): boolean {
+  if (classificationCategory === "marketing") return true;
+
+  if (email.unsubscribeUrl) return true;
+
+  const fromLower = (email.from || "").toLowerCase();
+  const fromDomain = fromLower.split("@")[1] || "";
+  if (MARKETING_SENDER_PATTERNS.some(p => fromLower.includes(p))) return true;
+  if (MARKETING_DOMAINS.some(d => fromDomain.includes(d))) return true;
+
   return false;
 }
 

@@ -26,7 +26,7 @@ import type { ConversationMessage, ChannelType, FilterTab, EntityListItem } from
 import {
   type Email, type EmailFilter, type TagInfo,
   PARTY_COLORS, formatCategory, detectRefs, stripHtml,
-  isUserInTo, isUserInCc, isFyiEmail,
+  isUserInTo, isUserInCc, isFyiEmail, isMarketingEmail,
 } from "@/types/email";
 import { useEmailActions } from "@/hooks/use-email-actions";
 import { TriageTrainer } from "@/components/email/triage-trainer";
@@ -35,6 +35,28 @@ import { useEmailClassify } from "@/hooks/use-email-classify";
 import { buildEmailSidebarTabs } from "@/components/email/email-sidebar-tabs";
 import { EmailHeader } from "@/components/email/email-header";
 import { ComposePanel } from "@/components/email/compose-panel";
+
+/**
+ * Module-level cache keyed by (folder, inboxId) so navigating off the email
+ * page and back doesn't force a full reload. Cache survives as long as the
+ * app is mounted; a full browser refresh clears it.
+ *
+ * Fresh cache (< STALE_MS): render instantly, do NOT show loading state.
+ * Stale cache: render instantly BUT show a background refresh indicator.
+ * No cache: show loading state as usual.
+ */
+type EmailCacheEntry = {
+  emails: Email[];
+  nextPageLink: string | null;
+  tags: Record<string, TagInfo[]>;
+  ts: number;
+};
+const emailCache = new Map<string, EmailCacheEntry>();
+const CACHE_STALE_MS = 60 * 1000; // 1 minute - beyond this, refresh on focus
+
+function cacheKey(folder: string, inboxId: number | null): string {
+  return `${folder}:${inboxId ?? ""}`;
+}
 
 export default function EmailPage() {
   const { session } = useSession();
@@ -47,12 +69,14 @@ export default function EmailPage() {
   const { data: assignments } = useEmailAssignments(selectedInboxId || undefined);
   const assignEmail = useAssignEmail();
 
-  // Email state
-  const [emails, setEmails] = useState<Email[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Email state - seed from cache so returning to the page is instant
+  const initialFolder = "inbox";
+  const initialCacheEntry = emailCache.get(cacheKey(initialFolder, null)) || null;
+  const [emails, setEmails] = useState<Email[]>(() => initialCacheEntry?.emails || []);
+  const [loading, setLoading] = useState(!initialCacheEntry);
   const [selected, setSelected] = useState<Email | null>(null);
   const { data: internalMessages } = useMessages(selected ? "email" : undefined, selected?.id);
-  const [folder, setFolder] = useState("inbox");
+  const [folder, setFolder] = useState(initialFolder);
   const [emailFilter, setEmailFilter] = useState<EmailFilter>("all");
   const [showCompose, setShowCompose] = useState(false);
   const [showReply, setShowReply] = useState(false);
@@ -107,14 +131,41 @@ export default function EmailPage() {
   // Load staff for assignment dropdown
   useEffect(() => {
     supabase.from("staff").select("name, email").eq("is_active", true)
-      .then(({ data }) => setStaffList(data || []));
+      .then(({ data }) => setStaffList(
+        (data || [])
+          .filter((s): s is { name: string; email: string } => !!s.email)
+          .map((s) => ({ name: s.name, email: s.email })),
+      ));
   }, []);
+
+  // Load persisted pins for this user
+  useEffect(() => {
+    if (!userEmail) return;
+    supabase.from("email_pins").select("email_id").eq("user_email", userEmail)
+      .then(({ data, error }) => {
+        if (error) {
+          console.error("[email] Failed to load pins:", error.message);
+          return;
+        }
+        setPinnedEmails(new Set((data || []).map((r) => r.email_id)));
+      });
+  }, [userEmail]);
 
   useEffect(() => { fetchEmails(); }, [folder, selectedInboxId]);
 
   useEffect(() => {
     emailIdsRef.current = new Set(emails.map(e => e.id));
   }, [emails]);
+
+  // Keep the cache in sync with local mutations (archive, delete, unsubscribe
+  // filter the list) so navigating away and back shows the current state.
+  useEffect(() => {
+    const key = cacheKey(folder, selectedInboxId);
+    const existing = emailCache.get(key);
+    if (existing) {
+      emailCache.set(key, { ...existing, emails, ts: existing.ts });
+    }
+  }, [emails, folder, selectedInboxId]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -187,6 +238,27 @@ export default function EmailPage() {
     }
   }, [selected?.id]);
 
+  // Mark as read in Outlook when selecting an unread email. Updates local
+  // state immediately so counts reflect the change; the Graph API call runs
+  // in the background and logs if it fails.
+  useEffect(() => {
+    if (!selected || selected.isRead) return;
+    const id = selected.id;
+    // Optimistic local update
+    setEmails(prev => prev.map(e => e.id === id ? { ...e, isRead: true } : e));
+    fetch("/api/email-sync", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email_id: id, action: "mark_read", user_email: userEmail }),
+    })
+      .then(res => {
+        if (!res.ok) {
+          console.error("[email] Failed to mark read in Outlook, HTTP", res.status);
+        }
+      })
+      .catch(err => console.error("[email] mark_read network error:", err));
+  }, [selected?.id, selected?.isRead, userEmail]);
+
   // Load intel + attachments + classify on email select
   useEffect(() => {
     if (selected) {
@@ -230,7 +302,22 @@ export default function EmailPage() {
   }
 
   async function fetchEmails() {
-    setLoading(true);
+    const key = cacheKey(folder, selectedInboxId);
+    const cached = emailCache.get(key);
+    const isFresh = cached && Date.now() - cached.ts < CACHE_STALE_MS;
+
+    // If we have any cache, seed immediately and don't show the full loading
+    // state - the background refetch replaces the data silently.
+    if (cached) {
+      setEmails(cached.emails);
+      setNextPageLink(cached.nextPageLink);
+      setEmailTags(cached.tags);
+      setLoading(false);
+      if (isFresh) return; // Skip the network call entirely
+    } else {
+      setLoading(true);
+    }
+
     try {
       const emailParam = getEmailParam();
       const url = emailParam
@@ -267,6 +354,14 @@ export default function EmailPage() {
       }
       if (tagWritePromises.length > 0) await Promise.all(tagWritePromises);
       setEmailTags(tags);
+
+      // Write to cache for next mount
+      emailCache.set(key, {
+        emails: loadedEmails,
+        nextPageLink: data.nextLink || null,
+        tags,
+        ts: Date.now(),
+      });
     } catch {
       toast.error("Failed to load emails");
     }
@@ -571,15 +666,17 @@ export default function EmailPage() {
                     case "log_deal":
                       emailActions.createDealFromEmail();
                       break;
-                    case "log_note":
-                      if (selected.matchedAccount || senderIntel?.accountCode) {
+                    case "log_note": {
+                      const accountCode = selected.matchedAccount || senderIntel?.accountCode;
+                      if (accountCode) {
                         supabase.from("client_notes").insert({
-                          account_code: selected.matchedAccount || senderIntel?.accountCode,
+                          account_code: accountCode,
                           note: `[Braiin] ${data.answer.slice(0, 300)}`,
                           author: session?.name || "Braiin",
                         }).then(() => toast.success("Note saved"));
                       }
                       break;
+                    }
                     case "log_quote":
                       toast.success("Quote logged");
                       break;
@@ -626,12 +723,13 @@ export default function EmailPage() {
   }), [emails, archivedEmails, taggedEmailIds, emailFilter, pinnedEmails, snoozedEmails]);
 
   const filterCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: visibleEmails.length, direct: 0, action: 0, cc: 0, fyi: 0, pinned: 0, snoozed: snoozedEmails.size, mine: 0, unassigned: 0 };
+    const counts: Record<string, number> = { all: visibleEmails.length, direct: 0, action: 0, cc: 0, fyi: 0, marketing: 0, pinned: 0, snoozed: snoozedEmails.size, mine: 0, unassigned: 0 };
     for (const e of visibleEmails) {
-      if (isUserInTo(e) && !isUserInCc(e)) counts.direct++;
-      if (!e.isRead && isUserInTo(e) && !isUserInCc(e)) counts.action++;
-      if (isUserInCc(e) && !isUserInTo(e)) counts.cc++;
+      if (isUserInTo(e, userEmail) && !isUserInCc(e, userEmail)) counts.direct++;
+      if (!e.isRead && isUserInTo(e, userEmail) && !isUserInCc(e, userEmail)) counts.action++;
+      if (isUserInCc(e, userEmail) && !isUserInTo(e, userEmail)) counts.cc++;
       if (isFyiEmail(e)) counts.fyi++;
+      if (isMarketingEmail(e, classifications[e.id]?.category)) counts.marketing++;
       if (pinnedEmails.has(e.id)) counts.pinned++;
       if (assignments) {
         const a = (assignments as Record<string, any>)[e.id];
@@ -640,21 +738,22 @@ export default function EmailPage() {
       }
     }
     return counts;
-  }, [visibleEmails, pinnedEmails, assignments, userEmail]);
+  }, [visibleEmails, pinnedEmails, assignments, userEmail, classifications]);
 
   const filteredEmails = useMemo(() => {
     switch (emailFilter) {
-      case "direct": return visibleEmails.filter(e => isUserInTo(e) && !isUserInCc(e));
-      case "action": return visibleEmails.filter(e => !e.isRead && isUserInTo(e) && !isUserInCc(e));
-      case "cc": return visibleEmails.filter(e => isUserInCc(e) && !isUserInTo(e));
+      case "direct": return visibleEmails.filter(e => isUserInTo(e, userEmail) && !isUserInCc(e, userEmail));
+      case "action": return visibleEmails.filter(e => !e.isRead && isUserInTo(e, userEmail) && !isUserInCc(e, userEmail));
+      case "cc": return visibleEmails.filter(e => isUserInCc(e, userEmail) && !isUserInTo(e, userEmail));
       case "fyi": return visibleEmails.filter(e => isFyiEmail(e));
+      case "marketing": return visibleEmails.filter(e => isMarketingEmail(e, classifications[e.id]?.category));
       case "pinned": return visibleEmails.filter(e => pinnedEmails.has(e.id));
       case "snoozed": return visibleEmails; // already filtered in visibleEmails
       case "mine": return visibleEmails.filter(e => { const a = (assignments as Record<string, any>)?.[e.id]; return a?.assigned_to === userEmail; });
       case "unassigned": return visibleEmails.filter(e => { const a = (assignments as Record<string, any>)?.[e.id]; return !a || a.status === "unassigned"; });
       default: return visibleEmails;
     }
-  }, [visibleEmails, emailFilter, pinnedEmails, assignments, userEmail]);
+  }, [visibleEmails, emailFilter, pinnedEmails, assignments, userEmail, classifications]);
 
   // Group by conversation thread
   type EmailThreadType = { latest: Email; emails: Email[]; count: number; conversationId: string };
@@ -690,6 +789,7 @@ export default function EmailPage() {
     }
     tabs.push({ key: "direct", label: "Direct", count: filterCounts.direct });
     tabs.push({ key: "cc", label: "CC'd", count: filterCounts.cc });
+    tabs.push({ key: "marketing", label: "Marketing", count: filterCounts.marketing });
     tabs.push({ key: "pinned", label: "Pinned", count: filterCounts.pinned });
     if (snoozedEmails.size > 0) tabs.push({ key: "snoozed", label: "Snoozed", count: snoozedEmails.size });
     return tabs;
@@ -796,11 +896,13 @@ export default function EmailPage() {
   const [forceSidebarTab, setForceSidebarTab] = useState<string | null>(null);
 
   // 4D Triage Actions - icons only
+  // Archive/delete both go through emailActions so the Graph API is called
+  // and the change persists in Outlook, not just the Braiin UI.
   const emailQuickActions: QuickAction[] = [
     { id: "archive", label: "Archive", icon: <Archive size={13} />, color: "text-zinc-500 hover:bg-zinc-200 hover:text-zinc-700",
-      onClick: (id) => { setArchivedEmails(prev => new Set([...prev, id])); setProcessedEmails(prev => new Set([...prev, id])); if (selected?.id === id) setSelected(null); toast.success("Archived"); } },
+      onClick: (id) => { emailActions.archiveEmail(id); } },
     { id: "delete", label: "Delete", icon: <Trash2 size={13} />, color: "text-zinc-500 hover:bg-red-50 hover:text-red-500",
-      onClick: (id) => { setArchivedEmails(prev => new Set([...prev, id])); if (selected?.id === id) setSelected(null); toast.success("Deleted"); } },
+      onClick: (id) => { emailActions.deleteEmail(id); } },
     { id: "snooze" as const, label: "Delegate", icon: <Forward size={13} />, color: "text-zinc-500 hover:bg-indigo-50 hover:text-indigo-600",
       onClick: (id) => {
         const email = emails.find(e => e.id === id);
@@ -925,16 +1027,16 @@ export default function EmailPage() {
           const cat = cls.category;
           const triageActions: { id: string; label: string; icon: string; onClick: () => void }[] = [];
 
-          // Marketing: unsubscribe + archive
-          if (cat === "marketing") {
+          // Marketing: unsubscribe + archive. Use the heuristic fallback too,
+          // so the shortcut appears even before AI classification runs on the
+          // email (previously it only showed when cat === "marketing" landed,
+          // which could be seconds to never depending on classification).
+          if (isMarketingEmail(selected, cat)) {
             triageActions.push({
               id: "unsubscribe", label: "Unsubscribe & Archive", icon: "bell-off",
               onClick: () => {
                 if (selected.unsubscribeUrl) window.open(selected.unsubscribeUrl, "_blank");
-                setArchivedEmails(prev => new Set([...prev, selected.id]));
-                setProcessedEmails(prev => new Set([...prev, selected.id]));
-                setSelected(null);
-                toast.success("Unsubscribed and archived");
+                emailActions.archiveEmail(selected.id);
               },
             });
           }
@@ -943,12 +1045,7 @@ export default function EmailPage() {
           if (cat === "fyi" || cat === "cc") {
             triageActions.push({
               id: "archive", label: "Archive", icon: "archive",
-              onClick: () => {
-                setArchivedEmails(prev => new Set([...prev, selected.id]));
-                setProcessedEmails(prev => new Set([...prev, selected.id]));
-                setSelected(null);
-                toast.success("Archived");
-              },
+              onClick: () => { emailActions.archiveEmail(selected.id); },
             });
           }
 
@@ -956,11 +1053,7 @@ export default function EmailPage() {
           if (cat === "recruiter") {
             triageActions.push({
               id: "delete", label: "Delete", icon: "trash",
-              onClick: () => {
-                setArchivedEmails(prev => new Set([...prev, selected.id]));
-                setSelected(null);
-                toast.success("Deleted");
-              },
+              onClick: () => { emailActions.deleteEmail(selected.id); },
             });
           }
 

@@ -70,7 +70,11 @@ export const ReplyBar = forwardRef<ReplyBarHandle, Props>(function ReplyBar({ ch
 
   useEffect(() => {
     supabase.from("staff").select("name, email").eq("is_active", true)
-      .then(({ data }) => setStaffList(data || []));
+      .then(({ data }) => setStaffList(
+        (data || [])
+          .filter((s): s is { name: string; email: string } => !!s.email)
+          .map((s) => ({ name: s.name, email: s.email })),
+      ));
   }, []);
 
   // Update CC when switching emails

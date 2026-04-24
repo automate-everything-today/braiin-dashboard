@@ -94,15 +94,45 @@ export function useEmailActions(params: EmailActionsParams) {
     toast.success(newVal ? "Set as primary thread" : "Removed primary");
   }
 
-  function pinEmail() {
+  async function pinEmail() {
     if (!selected) return;
+    const userEmail = session?.email;
+    if (!userEmail) {
+      toast.error("Not signed in - cannot pin");
+      return;
+    }
+
+    const isPinned = pinnedEmails.has(selected.id);
     const newPinned = new Set(pinnedEmails);
-    if (newPinned.has(selected.id)) {
+
+    if (isPinned) {
       newPinned.delete(selected.id);
+      setPinnedEmails(newPinned);
+      const { error } = await supabase.from("email_pins")
+        .delete().eq("user_email", userEmail).eq("email_id", selected.id);
+      if (error) {
+        console.error("[email] Failed to unpin:", error.message);
+        toast.error("Unpin failed - refresh to sync");
+        // Revert optimistic update
+        setPinnedEmails(pinnedEmails);
+        return;
+      }
       toast.success("Unpinned");
     } else {
       newPinned.add(selected.id);
+      setPinnedEmails(newPinned);
       setProcessedEmails(prev => new Set([...prev, selected.id]));
+
+      const { error } = await supabase.from("email_pins")
+        .insert({ user_email: userEmail, email_id: selected.id });
+      if (error) {
+        console.error("[email] Failed to pin:", error.message);
+        toast.error("Pin failed - refresh to sync");
+        setPinnedEmails(pinnedEmails);
+        return;
+      }
+
+      // Also create a follow-up task, as before
       supabase.from("tasks").insert({
         title: `Follow up: ${selected.subject}`,
         description: `From: ${selected.fromName || selected.from}\n${selected.preview}`,
@@ -113,10 +143,14 @@ export function useEmailActions(params: EmailActionsParams) {
         status: "open",
         auto_generated: true,
         source: "email_pin",
-      }).then(({ error }) => { if (error) toast.error("Failed to create follow-up task"); });
+      }).then(({ error: taskErr }) => {
+        if (taskErr) {
+          console.error("[email] Failed to create follow-up task:", taskErr.message);
+          toast.error("Pinned, but follow-up task failed");
+        }
+      });
       toast.success("Pinned - task created for follow-up");
     }
-    setPinnedEmails(newPinned);
   }
 
   async function archiveEmail(emailId?: string) {
@@ -129,13 +163,22 @@ export function useEmailActions(params: EmailActionsParams) {
     toast.success("Archived");
     // Actually move in Outlook
     try {
-      await fetch("/api/email-sync", {
+      const res = await fetch("/api/email-sync", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email_id: id, action: "archive", user_email: session?.email }),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        console.error("[archive] Graph API returned error:", body);
+        // Revert optimistic update so the email reappears in the list.
+        setArchivedEmails(prev => { const next = new Set(prev); next.delete(id); return next; });
+        toast.error(`Archive failed in Outlook: ${body.error || res.statusText}`);
+      }
     } catch (err) {
       console.error("[archive] Graph API call failed:", err);
+      setArchivedEmails(prev => { const next = new Set(prev); next.delete(id); return next; });
+      toast.error("Archive failed - could not reach Outlook");
     }
   }
 
@@ -149,13 +192,21 @@ export function useEmailActions(params: EmailActionsParams) {
     toast.success("Deleted");
     // Actually move to trash in Outlook
     try {
-      await fetch("/api/email-sync", {
+      const res = await fetch("/api/email-sync", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email_id: id, action: "delete", user_email: session?.email }),
       });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        console.error("[delete] Graph API returned error:", body);
+        setArchivedEmails(prev => { const next = new Set(prev); next.delete(id); return next; });
+        toast.error(`Delete failed in Outlook: ${body.error || res.statusText}`);
+      }
     } catch (err) {
       console.error("[delete] Graph API call failed:", err);
+      setArchivedEmails(prev => { const next = new Set(prev); next.delete(id); return next; });
+      toast.error("Delete failed - could not reach Outlook");
     }
   }
 
