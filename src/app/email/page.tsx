@@ -876,19 +876,25 @@ export default function EmailPage() {
       const a = (assignments as Record<string, any>)?.[email.id];
       const badges: { label: string; color: string; variant?: "default" | "tag" }[] = [];
       if (email.matchedAccount) badges.push({ label: email.matchedAccount, color: "" });
-      if (classifications[email.id]?.category) {
-        const cat = formatCategory(classifications[email.id].category);
-        badges.push({ label: cat.label, color: cat.className });
-      }
       // Thread stage pill: effective stage (user override beats AI). Colour
       // from the shared STAGE_STYLE palette so a given stage looks the same
       // everywhere (list card, AI bubble, dashboard column header).
       const stageCode = classifications[email.id]?.effective_conversation_stage
         ?? classifications[email.id]?.ai_conversation_stage
         ?? null;
-      if (isConversationStage(stageCode)) {
+      const stageLabel = isConversationStage(stageCode) ? STAGE_LABEL[stageCode] : null;
+      // Category badge: suppress when the category's display label matches
+      // the stage's (e.g. `quote_request` exists as both). The stage pill
+      // carries more information (lifecycle position) so it wins.
+      if (classifications[email.id]?.category) {
+        const cat = formatCategory(classifications[email.id].category);
+        if (cat.label !== stageLabel) {
+          badges.push({ label: cat.label, color: cat.className });
+        }
+      }
+      if (stageLabel && isConversationStage(stageCode)) {
         badges.push({
-          label: STAGE_LABEL[stageCode],
+          label: stageLabel,
           color: STAGE_STYLE[stageCode],
         });
       }
