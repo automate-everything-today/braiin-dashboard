@@ -570,7 +570,7 @@ export function ContactEnrichment({ senderEmail, senderName, matchedAccount, mat
                 .select("*").eq("account_code", byOrgName.account_code).order("report_month", { ascending: false }).limit(12);
               if (perf && perf.length > 0) {
                 // Reuse performance calculation from above
-                setForm(prev => ({ ...prev, company_name: byOrgName.org_name }));
+                setForm(prev => ({ ...prev, company_name: byOrgName.org_name ?? "" }));
               }
             }
           }

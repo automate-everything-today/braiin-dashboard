@@ -1,20 +1,8 @@
 import { getIncidents, createIncident } from "@/services/incidents";
 import { incidentSchema, apiResponse, apiError, validationError } from "@/lib/validation";
-import { cookies } from "next/headers";
-import { createClient } from "@supabase/supabase-js";
+import { getSession } from "@/lib/session";
+import { supabase } from "@/services/base";
 import { DEFAULT_SENDER_EMAIL, APP_URL } from "@/config/customer";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
-async function getSession() {
-  const cookieStore = await cookies();
-  const session = cookieStore.get("braiin_session");
-  if (!session?.value) return null;
-  try { return JSON.parse(session.value); } catch { return null; }
-}
 
 function escapeHtml(text: string): string {
   return String(text)
@@ -73,7 +61,12 @@ async function emailDirectors(incident: any) {
         },
         saveToSentItems: false,
       }),
-    }).catch(() => {});
+    }).catch((err) => {
+      console.error(
+        `[incidents] Failed to email director ${director.email} for incident ${incident.id}:`,
+        err,
+      );
+    });
   }
 }
 
@@ -110,7 +103,9 @@ export async function POST(req: Request) {
 
     // Black incidents: send email to directors
     if (incident.severity === "black") {
-      emailDirectors(incident).catch(() => {});
+      emailDirectors(incident).catch((err) => {
+        console.error(`[incidents] emailDirectors failed for incident ${incident.id}:`, err);
+      });
     }
 
     return apiResponse({ incident }, 201);

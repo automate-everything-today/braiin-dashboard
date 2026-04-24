@@ -1,16 +1,11 @@
-import { createClient } from "@supabase/supabase-js";
+import { supabase } from "@/services/base";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { CUSTOMER } from "@/config/customer";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
 
 export async function POST(req: Request) {
-  if (!checkRateLimit(getClientIp(req))) {
+  if (!(await checkRateLimit(getClientIp(req)))) {
     return Response.json({ error: "Too many requests. Please wait before trying again." }, { status: 429 });
   }
 
@@ -103,7 +98,7 @@ export async function POST(req: Request) {
       .limit(5);
 
     if (quotes && quotes.length > 0) {
-      contextParts.push(`RECENT QUOTES:\n${quotes.map(q => `- ${q.origin || "?"} to ${q.destination || "?"} (${q.mode || "?"}) - ${new Date(q.created_at).toLocaleDateString("en-GB")}`).join("\n")}`);
+      contextParts.push(`RECENT QUOTES:\n${quotes.map(q => `- ${q.origin || "?"} to ${q.destination || "?"} (${q.mode || "?"}) - ${q.created_at ? new Date(q.created_at).toLocaleDateString("en-GB") : "?"}`).join("\n")}`);
     }
   }
 

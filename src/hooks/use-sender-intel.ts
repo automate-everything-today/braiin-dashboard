@@ -32,8 +32,8 @@ export function useSenderIntel() {
       .eq("email", senderEmail).limit(1).single();
 
     if (contact) {
-      intel.accountCode = contact.account_code;
-      intel.companyName = contact.org_name;
+      intel.accountCode = contact.account_code ?? "";
+      intel.companyName = contact.org_name ?? "";
 
       // Run the 5 dependent queries in parallel
       const [perfResult, researchResult, contactCountResult, dealCountResult] = await Promise.all([

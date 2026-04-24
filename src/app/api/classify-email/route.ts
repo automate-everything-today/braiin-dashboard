@@ -1,17 +1,13 @@
-import { createClient } from "@supabase/supabase-js";
+import { supabase } from "@/services/base";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { CUSTOMER } from "@/config/customer";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { getSession } from "@/lib/session";
 
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
 
 // POST /api/classify-email - classify a single email
 export async function POST(req: Request) {
-  if (!checkRateLimit(getClientIp(req))) {
+  if (!(await checkRateLimit(getClientIp(req)))) {
     return Response.json({ error: "Too many requests. Please wait before trying again." }, { status: 429 });
   }
 
@@ -190,14 +186,22 @@ JSON only. No markdown. Standard hyphens only (-), never em dashes.`;
 
 // PUT /api/classify-email - save user feedback (training loop)
 export async function PUT(req: Request) {
+  const session = await getSession();
+  if (!session?.email) return Response.json({ error: "Not authenticated" }, { status: 401 });
+
   const { email_id, rating, feedback, override_category } = await req.json();
   if (!email_id) return Response.json({ error: "Missing email_id" }, { status: 400 });
 
-  await supabase.from("email_classifications").update({
+  const { error } = await supabase.from("email_classifications").update({
     user_rating: rating,
     user_feedback: feedback || "",
     user_override_category: override_category || "",
   }).eq("email_id", email_id);
+
+  if (error) {
+    console.error(`[classify-email] PUT failed for email_id=${email_id}:`, error.message);
+    return Response.json({ error: error.message }, { status: 500 });
+  }
 
   return Response.json({ success: true });
 }

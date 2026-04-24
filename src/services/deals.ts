@@ -1,4 +1,5 @@
 import { supabase, ServiceError } from "./base";
+import type { TablesInsert } from "@/types/database";
 
 export interface Deal {
   id: number;
@@ -77,7 +78,11 @@ export async function getDeals(pipelineTypeId?: number): Promise<Deal[]> {
 }
 
 export async function createDeal(deal: Partial<Deal>): Promise<Deal> {
-  const { data, error } = await supabase.from("deals").insert(deal).select().single();
+  const { data, error } = await supabase
+    .from("deals")
+    .insert(deal as TablesInsert<"deals">)
+    .select()
+    .single();
   if (error) throw new ServiceError("Failed to create deal", error);
 
   // Log activity

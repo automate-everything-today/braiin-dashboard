@@ -38,6 +38,7 @@ export async function getUnassignedCounts(groupIds: number[]): Promise<Record<nu
     .select("inbox_group_id").eq("status", "unassigned").in("inbox_group_id", groupIds);
   const counts: Record<number, number> = {};
   for (const row of (data || [])) {
+    if (row.inbox_group_id == null) continue;
     counts[row.inbox_group_id] = (counts[row.inbox_group_id] || 0) + 1;
   }
   return counts;

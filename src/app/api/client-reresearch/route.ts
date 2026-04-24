@@ -1,16 +1,11 @@
-import { createClient } from "@supabase/supabase-js";
+import { supabase } from "@/services/base";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 const PERPLEXITY_KEY = process.env.PERPLEXITY_API_KEY || "";
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
 
 export async function POST(req: Request) {
-  if (!checkRateLimit(getClientIp(req))) {
+  if (!(await checkRateLimit(getClientIp(req)))) {
     return Response.json({ error: "Too many requests. Please wait before trying again." }, { status: 429 });
   }
 

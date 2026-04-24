@@ -1,7 +1,11 @@
 import { getAccounts, createAccount } from "@/services/accounts";
 import { accountSchema, apiResponse, apiError, validationError } from "@/lib/validation";
+import { getSession } from "@/lib/session";
 
 export async function GET(req: Request) {
+  const session = await getSession();
+  if (!session?.email) return apiError("Not authenticated", 401);
+
   const url = new URL(req.url);
   const status = url.searchParams.get("status") || undefined;
   const relationship_type = url.searchParams.get("relationship_type") || undefined;
@@ -16,6 +20,9 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const session = await getSession();
+  if (!session?.email) return apiError("Not authenticated", 401);
+
   const body = await req.json();
   const parsed = accountSchema.safeParse(body);
   if (!parsed.success) return validationError(parsed.error);

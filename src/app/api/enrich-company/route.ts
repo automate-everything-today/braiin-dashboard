@@ -1,17 +1,12 @@
-import { createClient } from "@supabase/supabase-js";
+import { supabase } from "@/services/base";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { scrapeWebsite } from "@/lib/enrichment/scraper";
 import { researchCompany, findContacts } from "@/lib/enrichment/researcher";
 import { mapServices, mapModes, mergeArrays } from "@/lib/enrichment/taxonomy";
 import { enqueue } from "@/lib/enrichment/queue";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-);
-
 export async function POST(req: Request) {
-  if (!checkRateLimit(getClientIp(req))) {
+  if (!(await checkRateLimit(getClientIp(req)))) {
     return Response.json({ error: "Too many requests" }, { status: 429 });
   }
 

@@ -4,7 +4,7 @@ import { CUSTOMER } from "@/config/customer";
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
 
 export async function POST(req: Request) {
-  if (!checkRateLimit(getClientIp(req))) {
+  if (!(await checkRateLimit(getClientIp(req)))) {
     return Response.json({ error: "Too many requests" }, { status: 429 });
   }
 

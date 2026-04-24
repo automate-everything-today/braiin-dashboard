@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import { asStringArray } from "@/lib/db-utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { X, Maximize2, Minimize2, Send, RefreshCw, FileText, Search, Save } from "lucide-react";
@@ -74,7 +75,14 @@ export function ClientIntelPanel({ accountCode, clientName, isForwarder, researc
       .select("id, note, author, created_at")
       .eq("account_code", accountCode)
       .order("created_at", { ascending: false }).limit(20);
-    setNotes(data || []);
+    setNotes(
+      (data || []).map((r) => ({
+        id: r.id,
+        note: r.note,
+        author: r.author ?? "",
+        created_at: r.created_at ?? "",
+      })),
+    );
     setNotesLoading(false);
   }
 
@@ -104,15 +112,15 @@ export function ClientIntelPanel({ accountCode, clientName, isForwarder, researc
     if (data) {
       setResearch({
         clientNews: data.client_news || "",
-        growthSignals: data.growth_signals || [],
-        retentionRisks: data.retention_risks || [],
+        growthSignals: asStringArray(data.growth_signals),
+        retentionRisks: asStringArray(data.retention_risks),
         competitorIntel: data.competitor_intel || "",
         recommendedAction: data.recommended_action || "",
         accountHealth: data.account_health || "",
-        sourceLinks: data.source_links || [],
+        sourceLinks: asStringArray(data.source_links),
         researchDate: data.research_date || "",
         insight: data.insight || "",
-        ffNetworks: data.ff_networks || [],
+        ffNetworks: asStringArray(data.ff_networks),
       });
       setInsightText(data.insight || "");
     }

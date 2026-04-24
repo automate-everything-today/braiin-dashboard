@@ -1,12 +1,7 @@
-import { createClient } from "@supabase/supabase-js";
+import { supabase } from "@/services/base";
 import { enqueue } from "@/lib/enrichment/queue";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { DEFAULT_SENDER_EMAIL, isInternalEmail } from "@/config/customer";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 const CLIENT_ID = process.env.AZURE_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET || "";
@@ -26,8 +21,13 @@ async function getAppToken(): Promise<string | null> {
       }),
     });
     const data = await res.json();
-    return data.access_token || null;
-  } catch {
+    if (!data.access_token) {
+      console.error("[email-sync] getAppToken: no access_token in response", data.error || data);
+      return null;
+    }
+    return data.access_token;
+  } catch (err) {
+    console.error("[email-sync] getAppToken failed:", err);
     return null;
   }
 }
@@ -158,7 +158,10 @@ export async function GET(req: Request) {
       .select("email, account_code, org_name")
       .in("email", [...allExternalEmails].slice(0, 200));
     for (const c of (contacts || [])) {
-      if (c.email) contactMap[c.email] = { account_code: c.account_code, org_name: c.org_name };
+      if (c.email) contactMap[c.email] = {
+        account_code: c.account_code ?? "",
+        org_name: c.org_name ?? "",
+      };
     }
   }
 
@@ -268,6 +271,7 @@ async function queueUnknownSenders(
         .insert({
           company_domain: domain,
           company_name: domain.split(".")[0],
+          trade_type: "unknown",
           status: "prospect",
         })
         .select("id")
@@ -276,7 +280,7 @@ async function queueUnknownSenders(
       if (newCompany) {
         await enqueue({
           entity_type: "company",
-          entity_id: newCompany.id,
+          entity_id: String(newCompany.id),
           domain,
           priority: 1,
           trigger: "email_sync",
@@ -291,7 +295,7 @@ async function queueUnknownSenders(
 
 // POST - send email
 export async function POST(req: Request) {
-  if (!checkRateLimit(getClientIp(req))) {
+  if (!(await checkRateLimit(getClientIp(req)))) {
     return Response.json({ error: "Too many requests" }, { status: 429 });
   }
   const { from_email, to, subject, body, cc, deal_id, account_code, reply_to_email, ai_suggested_reply } = await req.json();
@@ -365,7 +369,7 @@ export async function POST(req: Request) {
 
 // PATCH - archive or delete email via Graph API
 export async function PATCH(req: Request) {
-  if (!checkRateLimit(getClientIp(req))) {
+  if (!(await checkRateLimit(getClientIp(req)))) {
     return Response.json({ error: "Too many requests" }, { status: 429 });
   }
   const { email_id, user_email, action } = await req.json();
@@ -412,6 +416,24 @@ export async function PATCH(req: Request) {
       const err = await res.text();
       console.error("[email-sync] Delete failed:", err);
       return Response.json({ error: "Failed to delete" }, { status: 502 });
+    }
+    return Response.json({ success: true });
+  }
+
+  if (action === "mark_read" || action === "mark_unread") {
+    const isRead = action === "mark_read";
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/users/${userEmail}/messages/${email_id}`,
+      {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ isRead }),
+      },
+    );
+    if (!res.ok) {
+      const err = await res.text();
+      console.error(`[email-sync] ${action} failed:`, err);
+      return Response.json({ error: `Failed to ${action}` }, { status: 502 });
     }
     return Response.json({ success: true });
   }

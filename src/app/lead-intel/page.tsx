@@ -202,7 +202,7 @@ export default function LeadIntelPage() {
   }
 
   async function assignToRep(repName: string) {
-    if (!selected) return;
+    if (!selected || selectedId == null) return;
     const rep = REPS.find((r) => r.name === repName);
     if (!rep) return;
 

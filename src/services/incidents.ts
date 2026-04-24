@@ -113,10 +113,20 @@ export async function createIncident(
   // Black: blacklist the account(s)
   if (incident.severity === "black") {
     if (incident.supplier_account_code) {
-      await blacklistAccount(incident.supplier_account_code, incident.title, incident.id).catch(() => {});
+      await blacklistAccount(incident.supplier_account_code, incident.title, incident.id).catch((err) => {
+        console.error(
+          `[incidents] Failed to blacklist supplier ${incident.supplier_account_code} for incident ${incident.id}:`,
+          err,
+        );
+      });
     }
     if (incident.account_code && incident.category === "failure_to_pay") {
-      await blacklistAccount(incident.account_code, incident.title, incident.id).catch(() => {});
+      await blacklistAccount(incident.account_code, incident.title, incident.id).catch((err) => {
+        console.error(
+          `[incidents] Failed to blacklist account ${incident.account_code} for incident ${incident.id}:`,
+          err,
+        );
+      });
     }
   }
 

@@ -24,7 +24,11 @@ export function MessageInput({ contextType, contextId, contextSummary, contextUr
 
   useEffect(() => {
     supabase.from("staff").select("name, email").eq("is_active", true)
-      .then(({ data }) => setStaffList(data || []));
+      .then(({ data }) => setStaffList(
+        (data || [])
+          .filter((s): s is { name: string; email: string } => !!s.email)
+          .map((s) => ({ name: s.name, email: s.email })),
+      ));
   }, []);
 
   function handleInput(value: string) {

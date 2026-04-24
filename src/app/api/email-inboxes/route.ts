@@ -1,13 +1,6 @@
 import { getInboxGroups, getUnassignedCounts, createInboxGroup } from "@/services/email-inboxes";
 import { apiResponse, apiError } from "@/lib/validation";
-import { cookies } from "next/headers";
-
-async function getSession() {
-  const cookieStore = await cookies();
-  const session = cookieStore.get("braiin_session");
-  if (!session?.value) return null;
-  try { return JSON.parse(session.value); } catch { return null; }
-}
+import { getSession } from "@/lib/session";
 
 export async function GET() {
   const session = await getSession();

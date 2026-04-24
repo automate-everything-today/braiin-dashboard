@@ -1,17 +1,22 @@
 import { SignJWT, jwtVerify } from "jose";
+import { cookies } from "next/headers";
 
-const SECRET = new TextEncoder().encode(
-  process.env.SESSION_SECRET || process.env.SUPABASE_SERVICE_KEY || "fallback-dev-secret-change-me",
-);
+const rawSecret = process.env.SESSION_SECRET;
 
+if (!rawSecret || rawSecret.length < 32) {
+  throw new Error(
+    "SESSION_SECRET is required and must be at least 32 characters. Refusing to start with a weak or missing session secret.",
+  );
+}
+
+const SECRET = new TextEncoder().encode(rawSecret);
 const ISSUER = "braiin.app";
 const AUDIENCE = "braiin.app";
+const COOKIE_NAME = "braiin_session";
 
 export type SessionPayload = {
   email: string;
   name: string;
-  azure_token: string;
-  refresh_token: string;
   expires_at: number;
   staff_id: number | null;
   role: string;
@@ -37,7 +42,25 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
       audience: AUDIENCE,
     });
     return payload as unknown as SessionPayload;
-  } catch {
+  } catch (err) {
+    console.warn("[session] JWT verification failed:", err instanceof Error ? err.message : err);
     return null;
   }
 }
+
+/**
+ * Reads the current request's session cookie and cryptographically verifies it.
+ * Returns null if the cookie is missing, forged, expired, or otherwise invalid.
+ * Use this in every API route that requires authentication.
+ */
+export async function getSession(): Promise<SessionPayload | null> {
+  const cookieStore = await cookies();
+  const cookie = cookieStore.get(COOKIE_NAME);
+  if (!cookie?.value) return null;
+  const payload = await verifySessionToken(cookie.value);
+  if (!payload) return null;
+  if (payload.expires_at && payload.expires_at < Date.now()) return null;
+  return payload;
+}
+
+export const SESSION_COOKIE_NAME = COOKIE_NAME;

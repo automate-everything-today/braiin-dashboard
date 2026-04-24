@@ -1,0 +1,106 @@
+name: Security Audit (on push to main)
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "CHANGELOG.md"
+      - "README.md"
+      - "docs/**"
+  workflow_dispatch: {}
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    env:
+      COMMIT_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Security audit
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: |
+            --model claude-sonnet-4-6
+            --allowedTools "Read,Grep,Glob,Bash(gh issue create:*),Bash(gh issue list:*)"
+          prompt: |
+            You are auditing the Braiin dashboard codebase (Next.js 16 / React 19
+            / Supabase / Microsoft Graph freight logistics CRM) after a push to
+            main. The goal is to catch regressions against our hardening work
+            and any new vulnerabilities the push may have introduced.
+
+            The commit being audited is in the environment variable COMMIT_SHA.
+
+            **Scope** — read-only audit, no file edits:
+
+            Verify these eight hardening items are still in place. For each,
+            either confirm "intact" or flag "REGRESSED" with file:line:
+            1. JWT session signing — src/proxy.ts must call verifySessionToken
+               on every /api/* request (except /api/auth/*, /api/cron/*). Bare
+               cookie presence checks anywhere in /api/* = REGRESSION.
+            2. Azure tokens removed — SessionPayload in src/lib/session.ts must
+               NOT contain azure_token or refresh_token. Callback must NOT put
+               tokens into the JWT.
+            3. Sender spoofing — src/app/api/send-email/route.ts must derive
+               sender from getSession(), not request body. No from_email read
+               from body.
+            4. Supabase client consolidated — no ad-hoc createClient() in
+               src/app/api/*. All routes should import from @/services/base.
+               services/base must throw on missing env vars.
+            5. Role guards — accounts/[id] lift_blacklist requires admin role,
+               upload-avatar reads email from session, classify-email PUT
+               requires auth.
+            6. Rate limiter — src/lib/rate-limit.ts uses supabase.rpc
+               check_rate_limit, getClientIp prefers x-vercel-forwarded-for.
+            7. Catch sweep — no empty catch {} or catch(() => {}) in api/,
+               services/ that were logged before.
+            8. Generated types — src/types/database.ts exists, createClient
+               passes <Database> generic in services/base.
+
+            **Also look for new issues:**
+            - New API routes under src/app/api/* added in this push — any
+               missing auth checks?
+            - Hardcoded secrets: grep for 'sk-', 'eyJ' JWT prefixes, API key
+               patterns in any changed file.
+            - Prompt injection: any new AI endpoint that embeds user-supplied
+               text in a system prompt without separation?
+            - SSRF: any new endpoint that fetches a URL from the request body
+               without validating the host?
+            - SQL injection: any new raw SQL / string-concatenation queries?
+            - Error leaks: stack traces or full upstream API payloads returned
+               in error responses?
+            - New `any` casts or `@ts-ignore` that escape type safety.
+
+            **Output action:**
+
+            Run `gh issue list --label security-audit --state open --limit 1`
+            to check for an existing open audit issue.
+
+            If there are ZERO CRITICAL and ZERO HIGH findings: print a single
+            line "AUDIT CLEAN - no issue opened" and exit. Do not create an
+            issue.
+
+            If there are any CRITICAL or HIGH findings: create a GitHub issue
+            with `gh issue create`:
+              - title: use the commit SHA from $COMMIT_SHA env var, e.g.
+                "Security audit findings (commit <first 8 chars of sha>)"
+              - label: security-audit
+              - body: full findings grouped by CRITICAL / HIGH / MEDIUM / LOW.
+                For each: file:line, issue (one sentence), blast radius,
+                concrete fix. End with a "Regressions from prior hardening"
+                section listing any of the 8 items flagged REGRESSED.
+
+            Be ruthless. Under 2000 words in the issue body.

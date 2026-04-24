@@ -104,7 +104,14 @@ export function IncidentForm({ prefill, emailContext, onClose }: Props) {
   useEffect(() => {
     supabase.from("incident_categories").select("name, label, group_name, severity_hint")
       .eq("is_active", true).order("usage_count", { ascending: false }).order("label")
-      .then(({ data }) => setCategories(data || []));
+      .then(({ data }) => setCategories(
+        (data || []).map((c) => ({
+          name: c.name,
+          label: c.label,
+          group_name: c.group_name ?? "",
+          severity_hint: c.severity_hint ?? "",
+        })),
+      ));
   }, []);
 
   async function addNewCategory() {

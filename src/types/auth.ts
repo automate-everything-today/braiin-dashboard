@@ -12,7 +12,6 @@ export interface Session {
   is_staff: boolean;
   staff_id: number | null;
   page_access: string[];
-  azure_token?: string;
 }
 
 export interface QueryContext {

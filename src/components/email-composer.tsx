@@ -72,8 +72,17 @@ export function EmailComposer({ accountCode, clientName, onClose }: Props) {
       .not("email", "eq", "")
       .order("is_default", { ascending: false })
       .then(({ data }) => {
-        setContacts(data || []);
-        const def = (data || []).find((c: any) => c.is_default);
+        const normalised: Contact[] = (data || [])
+          .filter((c): c is typeof c & { email: string } => !!c.email)
+          .map((c) => ({
+            id: c.id,
+            contact_name: c.contact_name ?? "",
+            email: c.email,
+            job_title: c.job_title ?? "",
+            is_default: c.is_default ?? false,
+          }));
+        setContacts(normalised);
+        const def = normalised.find((c) => c.is_default);
         if (def) setSelectedContact(def);
       });
 
@@ -83,7 +92,16 @@ export function EmailComposer({ accountCode, clientName, onClose }: Props) {
       .eq("account_code", accountCode)
       .order("sent_at", { ascending: false })
       .limit(10)
-      .then(({ data }) => setSentEmails(data || []));
+      .then(({ data }) => setSentEmails(
+        (data || []).map((r) => ({
+          id: r.id,
+          to_email: r.to_email,
+          to_name: r.to_name ?? "",
+          subject: r.subject,
+          from_name: r.from_name ?? "",
+          sent_at: r.sent_at ?? "",
+        })),
+      ));
   }, [accountCode]);
 
   async function generateDraft(emailType: string) {
@@ -132,8 +150,6 @@ export function EmailComposer({ accountCode, clientName, onClose }: Props) {
           to_name: selectedContact?.contact_name || "",
           subject,
           body,
-          from_email: userEmail,
-          from_name: userName,
         }),
       });
       const data = await res.json();

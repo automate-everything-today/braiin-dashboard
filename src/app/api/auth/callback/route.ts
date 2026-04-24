@@ -1,16 +1,11 @@
 import { cookies } from "next/headers";
-import { createClient } from "@supabase/supabase-js";
-import { createSessionToken } from "@/lib/session";
+import { supabase } from "@/services/base";
+import { createSessionToken, SESSION_COOKIE_NAME, type SessionPayload } from "@/lib/session";
 
 const CLIENT_ID = process.env.AZURE_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET || "";
 const TENANT_ID = process.env.AZURE_TENANT_ID || "";
 const REDIRECT_URI = process.env.AZURE_REDIRECT_URI || "https://braiin.app/api/auth/callback";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -96,12 +91,15 @@ export async function GET(req: Request) {
     console.warn(`[auth] No staff record for ${email} - assigning viewer role`);
   }
 
-  // Store session in cookie
-  const session = {
+  // Build and sign the session JWT.
+  // Deliberately excludes Azure access_token and refresh_token: they are never
+  // read anywhere in the application (all Graph calls use app-level
+  // client_credentials), so putting them in a cookie served only as a leak
+  // vector. If user-delegated Graph access is ever needed, store the tokens
+  // in a dedicated encrypted table keyed by staff_id - not in the session.
+  const session: SessionPayload = {
     email,
     name,
-    azure_token: tokenData.access_token,
-    refresh_token: tokenData.refresh_token || "",
     expires_at: Date.now() + (tokenData.expires_in || 3600) * 1000,
     staff_id: staff?.id || null,
     role: staff?.role || "viewer",
@@ -110,7 +108,9 @@ export async function GET(req: Request) {
     is_staff: !!staff,
   };
 
-  cookieStore.set("braiin_session", JSON.stringify(session), {
+  const token = await createSessionToken(session);
+
+  cookieStore.set(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
     secure: true,
     sameSite: "lax",

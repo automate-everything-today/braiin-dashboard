@@ -1,6 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
-
-export const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
+// Backwards-compatible re-export. New code should import directly from
+// "@/services/base" which has the runtime-dispatched (server vs browser)
+// client with proper service-role handling.
+export { supabase } from "@/services/base";

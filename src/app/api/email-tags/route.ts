@@ -1,9 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { supabase } from "@/services/base";
 
 // GET - search emails by tag
 export async function GET(req: Request) {
@@ -31,7 +26,7 @@ export async function GET(req: Request) {
     .select("tag, tag_type, party");
   const tagCounts: Record<string, { count: number; type: string; parties: string[] }> = {};
   for (const t of (data || [])) {
-    if (!tagCounts[t.tag]) tagCounts[t.tag] = { count: 0, type: t.tag_type, parties: [] };
+    if (!tagCounts[t.tag]) tagCounts[t.tag] = { count: 0, type: t.tag_type ?? "", parties: [] };
     tagCounts[t.tag].count++;
     if (t.party && !tagCounts[t.tag].parties.includes(t.party)) tagCounts[t.tag].parties.push(t.party);
   }

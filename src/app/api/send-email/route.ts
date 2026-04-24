@@ -1,28 +1,44 @@
-import { createClient } from "@supabase/supabase-js";
+import { supabase } from "@/services/base";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { DEFAULT_SENDER_EMAIL } from "@/config/customer";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { DEFAULT_SENDER_EMAIL, isInternalEmail } from "@/config/customer";
+import { getSession } from "@/lib/session";
 
 const RESEND_KEY = process.env.RESEND_API_KEY || "";
 
 export async function POST(req: Request) {
-  if (!checkRateLimit(getClientIp(req))) {
+  if (!(await checkRateLimit(getClientIp(req)))) {
     return Response.json({ error: "Too many requests" }, { status: 429 });
   }
-  const { account_code, to, to_name, subject, body, from_email, from_name } = await req.json();
+
+  const session = await getSession();
+  if (!session?.email) {
+    return Response.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
+  if (!isInternalEmail(session.email)) {
+    console.warn(`[send-email] Blocked send attempt from non-internal email: ${session.email}`);
+    return Response.json({ error: "Sender not authorised" }, { status: 403 });
+  }
+
+  let payload: { account_code?: string; to?: string; to_name?: string; subject?: string; body?: string };
+  try {
+    payload = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const { account_code, to, to_name, subject, body } = payload;
   if (!to || !subject || !body) {
     return Response.json({ error: "Missing to, subject, or body" }, { status: 400 });
   }
   if (!RESEND_KEY) {
-    return Response.json({ error: "No Resend API key configured" }, { status: 500 });
+    console.error("[send-email] RESEND_API_KEY not configured");
+    return Response.json({ error: "Email service not configured" }, { status: 500 });
   }
 
-  const senderEmail = from_email || DEFAULT_SENDER_EMAIL;
-  const senderName = from_name || process.env.DEFAULT_SENDER_NAME || "Support";
+  // Sender is the authenticated user - never trust the client body for this.
+  const senderEmail = session.email;
+  const senderName = session.name || DEFAULT_SENDER_EMAIL;
 
   try {
     const res = await fetch("https://api.resend.com/emails", {
@@ -43,9 +59,8 @@ export async function POST(req: Request) {
     const data = await res.json();
 
     if (data.id) {
-      // Log the email
       if (account_code) {
-        await supabase.from("client_emails").insert({
+        const { error: logErr } = await supabase.from("client_emails").insert({
           account_code,
           from_email: senderEmail,
           from_name: senderName,
@@ -56,13 +71,20 @@ export async function POST(req: Request) {
           resend_id: data.id,
           status: "sent",
         });
+        if (logErr) {
+          console.error("[send-email] Failed to log sent email:", logErr.message);
+        }
       }
 
       return Response.json({ success: true, id: data.id });
-    } else {
-      return Response.json({ error: data.message || "Send failed", details: data }, { status: 502 });
     }
-  } catch (e: any) {
-    return Response.json({ error: e.message || "Send error" }, { status: 500 });
+
+    // Log provider error server-side but do not leak full payload to caller.
+    console.error("[send-email] Resend error:", data);
+    return Response.json({ error: data.message || "Send failed" }, { status: 502 });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Send error";
+    console.error("[send-email] Unexpected error:", e);
+    return Response.json({ error: msg }, { status: 500 });
   }
 }
