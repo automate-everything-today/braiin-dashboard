@@ -60,19 +60,21 @@ export const PARTY_COLORS: Record<string, string> = {
   Haulage: "bg-purple-100 text-purple-700",
 };
 
-// Category display config: label, background colour (pastel), text colour
+// Category display config: label + neutral greyscale. Categories are
+// secondary triage info - stages carry the lifecycle signal and tags carry
+// routing. Kept muted so stages are the loudest pill on a list card.
 export const CATEGORY_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
-  direct: { label: "Direct", bg: "bg-blue-100", text: "text-blue-700" },
-  action: { label: "Action", bg: "bg-orange-100", text: "text-orange-700" },
-  cc: { label: "CC", bg: "bg-zinc-100", text: "text-zinc-600" },
-  fyi: { label: "FYI", bg: "bg-zinc-100", text: "text-zinc-500" },
-  marketing: { label: "Marketing", bg: "bg-pink-100", text: "text-pink-700" },
-  internal: { label: "Internal", bg: "bg-indigo-100", text: "text-indigo-700" },
-  agent_request: { label: "Agent Request", bg: "bg-purple-100", text: "text-purple-700" },
-  quote_request: { label: "Quote Request", bg: "bg-green-100", text: "text-green-700" },
-  rfq: { label: "RFQ", bg: "bg-emerald-100", text: "text-emerald-700" },
-  rates: { label: "Rates", bg: "bg-cyan-100", text: "text-cyan-700" },
-  recruiter: { label: "Recruiter", bg: "bg-rose-100", text: "text-rose-700" },
+  direct: { label: "Direct", bg: "bg-zinc-100", text: "text-zinc-600" },
+  action: { label: "Action", bg: "bg-zinc-200", text: "text-zinc-700" },
+  cc: { label: "CC", bg: "bg-zinc-100", text: "text-zinc-500" },
+  fyi: { label: "FYI", bg: "bg-zinc-50", text: "text-zinc-500" },
+  marketing: { label: "Marketing", bg: "bg-zinc-100", text: "text-zinc-500" },
+  internal: { label: "Internal", bg: "bg-zinc-100", text: "text-zinc-600" },
+  agent_request: { label: "Agent Request", bg: "bg-zinc-100", text: "text-zinc-600" },
+  quote_request: { label: "Quote Request", bg: "bg-zinc-100", text: "text-zinc-600" },
+  rfq: { label: "RFQ", bg: "bg-zinc-100", text: "text-zinc-600" },
+  rates: { label: "Rates", bg: "bg-zinc-100", text: "text-zinc-600" },
+  recruiter: { label: "Recruiter", bg: "bg-zinc-100", text: "text-zinc-500" },
 };
 
 export function formatCategory(cat: string): { label: string; className: string } {

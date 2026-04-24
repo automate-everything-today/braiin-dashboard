@@ -876,27 +876,34 @@ export default function EmailPage() {
       const a = (assignments as Record<string, any>)?.[email.id];
       const badges: { label: string; color: string; variant?: "default" | "tag" }[] = [];
       if (email.matchedAccount) badges.push({ label: email.matchedAccount, color: "" });
-      // Thread stage pill: effective stage (user override beats AI). Colour
-      // from the shared STAGE_STYLE palette so a given stage looks the same
-      // everywhere (list card, AI bubble, dashboard column header).
+      // Three-tier pill ordering on a list card:
+      //   1. STAGE - loudest, lifecycle signal ("where is this deal?")
+      //   2. TAGS  - subtle, dept + mode routing
+      //   3. CATEGORY - muted, only when there's no stage to displace it
+      //      (e.g. marketing / fyi / recruiter emails outside the lifecycle)
       const stageCode = classifications[email.id]?.effective_conversation_stage
         ?? classifications[email.id]?.ai_conversation_stage
         ?? null;
-      const stageLabel = isConversationStage(stageCode) ? STAGE_LABEL[stageCode] : null;
-      // Category badge: suppress when the category's display label matches
-      // the stage's (e.g. `quote_request` exists as both). The stage pill
-      // carries more information (lifecycle position) so it wins.
-      if (classifications[email.id]?.category) {
-        const cat = formatCategory(classifications[email.id].category);
-        if (cat.label !== stageLabel) {
-          badges.push({ label: cat.label, color: cat.className });
-        }
-      }
-      if (stageLabel && isConversationStage(stageCode)) {
+      const hasStage = isConversationStage(stageCode);
+      if (hasStage) {
         badges.push({
-          label: stageLabel,
-          color: STAGE_STYLE[stageCode],
+          label: STAGE_LABEL[stageCode as ConversationStage],
+          color: STAGE_STYLE[stageCode as ConversationStage],
         });
+      }
+      const tagsForCard: string[] = classifications[email.id]?.effective_tags
+        ?? classifications[email.id]?.ai_tags
+        ?? [];
+      for (const t of tagsForCard.slice(0, 3)) {
+        const isMode = ["Air", "Road", "Sea", "Warehousing"].includes(t);
+        badges.push({
+          label: t,
+          color: isMode ? "bg-violet-50 text-violet-700" : "bg-blue-50 text-blue-700",
+        });
+      }
+      if (!hasStage && classifications[email.id]?.category) {
+        const cat = formatCategory(classifications[email.id].category);
+        badges.push({ label: cat.label, color: cat.className });
       }
       if (thread.count > 1) badges.push({ label: `${thread.count}`, color: "bg-zinc-200 text-zinc-600" });
       const tags = emailTags[email.id] || [];
