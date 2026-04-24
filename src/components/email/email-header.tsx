@@ -62,17 +62,17 @@ export function EmailHeader({
         </Tooltip>
         <div className="w-px h-4 bg-zinc-200 mx-0.5" />
         <Tooltip content={isPinned ? "Unpin" : "Pin - creates follow-up task"}>
-          <button onClick={pinEmail} className={`p-1.5 hover:bg-zinc-100 rounded ${isPinned ? "text-zinc-900" : "text-zinc-400"}`}><Pin size={13} /></button>
+          <button onClick={() => pinEmail()} className={`p-1.5 hover:bg-zinc-100 rounded ${isPinned ? "text-zinc-900" : "text-zinc-400"}`}><Pin size={13} /></button>
         </Tooltip>
         <Tooltip content="Archive">
-          <button onClick={archiveEmail} className="p-1.5 hover:bg-zinc-100 rounded"><Archive size={13} className="text-zinc-500" /></button>
+          <button onClick={() => archiveEmail()} className="p-1.5 hover:bg-zinc-100 rounded"><Archive size={13} className="text-zinc-500" /></button>
         </Tooltip>
         <Tooltip content="Delete">
-          <button onClick={deleteEmail} className="p-1.5 hover:bg-zinc-100 rounded"><Trash2 size={13} className="text-zinc-500" /></button>
+          <button onClick={() => deleteEmail()} className="p-1.5 hover:bg-zinc-100 rounded"><Trash2 size={13} className="text-zinc-500" /></button>
         </Tooltip>
         <div className="w-px h-4 bg-zinc-200 mx-0.5" />
         <Tooltip content="Unsubscribe & block sender">
-          <button onClick={unsubscribe} className="p-1.5 hover:bg-red-50 rounded"><BellOff size={13} className="text-red-400" /></button>
+          <button onClick={() => unsubscribe()} className="p-1.5 hover:bg-red-50 rounded"><BellOff size={13} className="text-red-400" /></button>
         </Tooltip>
         <div className="relative">
           <Tooltip content="More actions">

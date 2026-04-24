@@ -2,6 +2,7 @@ import { supabase } from "@/services/base";
 import { enqueue } from "@/lib/enrichment/queue";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { DEFAULT_SENDER_EMAIL, isInternalEmail } from "@/config/customer";
+import { getSession } from "@/lib/session";
 
 const CLIENT_ID = process.env.AZURE_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET || "";
@@ -367,22 +368,37 @@ export async function POST(req: Request) {
   return Response.json({ error: "Failed to send" }, { status: 502 });
 }
 
-// PATCH - archive or delete email via Graph API
+// PATCH - archive, delete, or change read state on an email via Graph API
 export async function PATCH(req: Request) {
   if (!(await checkRateLimit(getClientIp(req)))) {
     return Response.json({ error: "Too many requests" }, { status: 429 });
   }
+
+  const session = await getSession();
+  if (!session?.email) {
+    return Response.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
   const { email_id, user_email, action } = await req.json();
   if (!email_id || !action) return Response.json({ error: "Missing email_id or action" }, { status: 400 });
-  if (/[\/\\.]/.test(email_id)) return Response.json({ error: "Invalid email_id" }, { status: 400 });
+  if (/[\\]/.test(email_id)) return Response.json({ error: "Invalid email_id" }, { status: 400 });
 
   const token = await getAppToken();
   if (!token) return Response.json({ error: "Failed to get Graph token" }, { status: 502 });
 
-  const userEmail = user_email || DEFAULT_SENDER_EMAIL;
-  if (!isInternalEmail(userEmail)) {
-    return Response.json({ error: "Invalid email" }, { status: 400 });
+  // Mailbox to act on: if the caller passed an internal email (shared inbox
+  // case), use that. Otherwise default to the sender-shared mailbox. We do
+  // NOT want to call Graph with a guest/external email - Graph won't resolve
+  // those as mailboxes in this tenant.
+  let userEmail = DEFAULT_SENDER_EMAIL;
+  if (user_email && isInternalEmail(user_email)) {
+    userEmail = user_email;
+  } else if (isInternalEmail(session.email)) {
+    userEmail = session.email;
   }
+  // At this point userEmail is guaranteed to be an internal-domain mailbox
+  // (either the explicit shared inbox, the caller's corporate address, or
+  // the configured DEFAULT_SENDER_EMAIL fallback).
 
   if (action === "archive") {
     // Move to Archive folder

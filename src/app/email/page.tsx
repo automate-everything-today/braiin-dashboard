@@ -730,15 +730,22 @@ export default function EmailPage() {
       if (isUserInCc(e, userEmail) && !isUserInTo(e, userEmail)) counts.cc++;
       if (isFyiEmail(e)) counts.fyi++;
       if (isMarketingEmail(e, classifications[e.id]?.category)) counts.marketing++;
-      if (pinnedEmails.has(e.id)) counts.pinned++;
       if (assignments) {
         const a = (assignments as Record<string, any>)[e.id];
         if (a?.assigned_to === userEmail) counts.mine++;
         if (!a || a.status === "unassigned") counts.unassigned++;
       }
     }
+    // Pinned count comes from the FULL email list (minus archived), because
+    // visibleEmails hides pinned items on every tab except the Pinned tab.
+    // Without this, the Pinned counter would read 0 on every other tab.
+    for (const e of emails) {
+      if (!archivedEmails.has(e.id) && pinnedEmails.has(e.id)) {
+        counts.pinned++;
+      }
+    }
     return counts;
-  }, [visibleEmails, pinnedEmails, assignments, userEmail, classifications]);
+  }, [visibleEmails, emails, archivedEmails, pinnedEmails, assignments, userEmail, classifications]);
 
   const filteredEmails = useMemo(() => {
     switch (emailFilter) {
@@ -801,7 +808,7 @@ export default function EmailPage() {
       const email = thread.latest;
       const a = (assignments as Record<string, any>)?.[email.id];
       const badges: { label: string; color: string; variant?: "default" | "tag" }[] = [];
-      if (email.matchedCompany) badges.push({ label: email.matchedCompany, color: "" });
+      if (email.matchedAccount) badges.push({ label: email.matchedAccount, color: "" });
       if (classifications[email.id]?.category) {
         const cat = formatCategory(classifications[email.id].category);
         badges.push({ label: cat.label, color: cat.className });
@@ -809,6 +816,9 @@ export default function EmailPage() {
       if (thread.count > 1) badges.push({ label: `${thread.count}`, color: "bg-zinc-200 text-zinc-600" });
       const tags = emailTags[email.id] || [];
       for (const t of tags) {
+        // Skip a tag that matches the matchedAccount - we already show that
+        // as the account badge and don't want a duplicate chip.
+        if (email.matchedAccount && t.tag === email.matchedAccount) continue;
         badges.push({
           label: t.tag,
           color: "bg-zinc-900 text-white",

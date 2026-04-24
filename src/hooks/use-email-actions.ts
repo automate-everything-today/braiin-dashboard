@@ -154,7 +154,11 @@ export function useEmailActions(params: EmailActionsParams) {
   }
 
   async function archiveEmail(emailId?: string) {
-    const id = emailId || selected?.id;
+    // Defensive: React button onClick passes the MouseEvent as the first arg.
+    // If a caller wires `onClick={archiveEmail}` without a wrapper, we get a
+    // DOM event instead of a string id. Reject anything that isn't a string.
+    const rawId = typeof emailId === "string" ? emailId : undefined;
+    const id = rawId || selected?.id;
     if (!id) return;
     // Optimistic UI update
     setArchivedEmails(prev => new Set([...prev, id]));
@@ -176,14 +180,16 @@ export function useEmailActions(params: EmailActionsParams) {
         toast.error(`Archive failed in Outlook: ${body.error || res.statusText}`);
       }
     } catch (err) {
-      console.error("[archive] Graph API call failed:", err);
+      console.error("[archive] fetch rejected:", err);
       setArchivedEmails(prev => { const next = new Set(prev); next.delete(id); return next; });
-      toast.error("Archive failed - could not reach Outlook");
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(`Archive failed: ${msg}`);
     }
   }
 
   async function deleteEmail(emailId?: string) {
-    const id = emailId || selected?.id;
+    const rawId = typeof emailId === "string" ? emailId : undefined;
+    const id = rawId || selected?.id;
     if (!id) return;
     // Optimistic UI update
     setArchivedEmails(prev => new Set([...prev, id]));
@@ -204,9 +210,10 @@ export function useEmailActions(params: EmailActionsParams) {
         toast.error(`Delete failed in Outlook: ${body.error || res.statusText}`);
       }
     } catch (err) {
-      console.error("[delete] Graph API call failed:", err);
+      console.error("[delete] fetch rejected:", err);
       setArchivedEmails(prev => { const next = new Set(prev); next.delete(id); return next; });
-      toast.error("Delete failed - could not reach Outlook");
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(`Delete failed: ${msg}`);
     }
   }
 
