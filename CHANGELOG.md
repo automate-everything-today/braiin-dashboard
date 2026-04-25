@@ -4,6 +4,15 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### Tasks API + Outlook ToDo sync
+
+- New `/api/tasks` REST layer (GET / POST / PATCH / DELETE) replaces the direct Supabase calls the `/tasks` page was making. Enforces visibility rules: regular staff see tasks assigned to or created by them; managers can pass `?scope=team` to see their department's; super_admin sees everything. Zod-validated payloads.
+- Migration `017_tasks_sync.sql` extends the existing tasks table with sync metadata (`outlook_task_id`, `outlook_list_id`, `last_synced_at`, `sync_status`) and source linking (`source_type` in manual/email/deal/incident/ai, `source_id`, `source_url`). Indexed for the cron pull-side join (`outlook_task_id`) and for source-spawned tasks (`source_type, source_id`).
+- New `src/lib/outlook-todo.ts` wraps Microsoft Graph ToDo: `getDefaultListId(userEmail)`, `createOutlookTask(...)`, `updateOutlookTask(...)`, `deleteOutlookTask(...)`. App-level Graph token via existing `client_credentials` flow. Required scope: `Tasks.ReadWrite.All`.
+- Sync is gated behind `OUTLOOK_TASKS_SYNC_ENABLED=true` env var. While the flag is off, all Graph helpers no-op and tasks are local-only with `sync_status='disabled'` - so the API ships now and starts syncing the moment Azure admin grants Tasks.ReadWrite.All. When on, every POST / PATCH / DELETE pushes to Outlook and stamps `sync_status` with synced / pending / error.
+- /tasks page swapped to use the new API; toast surfaces the real server error on failure rather than a generic message.
+- Deferred (next session): cron pull-side (Outlook -> Braiin reconciliation), AI auto-task suggestions from email classifier `suggested_action`, "Mark as task" button on email AI bubble.
+
 ### AI learning governance
 
 - New `/settings/ai-learning` review page (manager + super_admin only) gives visibility and control over the writing-voice corpus that drives reply suggestions. Two sections: per-staff toggle table and a captured-samples browser.

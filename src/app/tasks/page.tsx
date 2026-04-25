@@ -35,13 +35,13 @@ const PRIORITY_COLORS: Record<string, string> = {
 };
 
 async function getTasks(filter: string): Promise<Task[]> {
-  let query = supabase.from("tasks").select("*").order("due_date", { ascending: true });
-  if (filter === "open") query = query.in("status", ["open", "in_progress"]);
-  if (filter === "completed") query = query.eq("status", "completed");
-  if (filter === "overdue") query = query.in("status", ["open", "in_progress"]).lt("due_date", new Date().toISOString().split("T")[0]);
-  const { data, error } = await query;
-  if (error) throw error;
-  return (data || []) as Task[];
+  // Use the API layer rather than direct Supabase so visibility rules
+  // (own + assigned, manager team scope, super_admin all) and Outlook
+  // sync metadata flow through correctly.
+  const res = await fetch(`/api/tasks?filter=${encodeURIComponent(filter)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to load tasks");
+  return (data.tasks || []) as Task[];
 }
 
 export default function TasksPage() {
@@ -57,32 +57,46 @@ export default function TasksPage() {
 
   const createTask = useMutation({
     mutationFn: async (task: typeof newTask) => {
-      const { error } = await supabase.from("tasks").insert({
-        ...task,
-        status: "open",
-        auto_generated: false,
+      const res = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: task.title,
+          description: task.description || null,
+          assigned_to: task.assigned_to || null,
+          due_date: task.due_date || null,
+          priority: task.priority,
+          account_code: task.account_code || null,
+          source_type: "manual",
+        }),
       });
-      if (error) throw error;
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["tasks"] }); toast.success("Task created"); },
-    onError: () => toast.error("Failed to create task"),
+    onError: (e: Error) => toast.error(e.message || "Failed to create task"),
   });
 
   const completeTask = useMutation({
     mutationFn: async (id: number) => {
-      const { error } = await supabase.from("tasks").update({
-        status: "completed",
-        completed_at: new Date().toISOString(),
-      }).eq("id", id);
-      if (error) throw error;
+      const res = await fetch("/api/tasks", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status: "completed" }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed");
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["tasks"] }); toast.success("Task completed"); },
   });
 
   const deleteTask = useMutation({
     mutationFn: async (id: number) => {
-      const { error } = await supabase.from("tasks").update({ status: "cancelled" }).eq("id", id);
-      if (error) throw error;
+      const res = await fetch("/api/tasks", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status: "cancelled" }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed");
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["tasks"] }); toast.success("Task cancelled"); },
   });
