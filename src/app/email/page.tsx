@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useCallback, useEffect, useState, useMemo, useRef } from "react";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { isInternalEmail } from "@/config/customer";
+import { CATEGORY_CONFIG } from "@/types/email";
 import {
   Send, X, RefreshCw, Mail, Paperclip, Pin, Archive, Trash2,
   UserPlus, Kanban, Link, Lightbulb, Share2, Forward, Reply, ReplyAll,
@@ -122,6 +123,14 @@ export default function EmailPage() {
   const [showActions, setShowActions] = useState(false);
   const [pinnedEmails, setPinnedEmails] = useState<Set<string>>(new Set());
   const [archivedEmails, setArchivedEmails] = useState<Set<string>>(new Set());
+  // Multi-select for bulk triage. selectedIds is a Set so toggling is O(1)
+  // and identity changes per render (React picks up the change). lastSelected
+  // tracks the most recent toggled id so shift-click can range-select against
+  // it. selectedIds clears when folder/filter changes so a stale selection
+  // can't fan out unrelated bulk actions.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const lastSelectedRef = useRef<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [snoozedEmails, setSnoozedEmails] = useState<Map<string, Date>>(new Map());
   const [processedEmails, setProcessedEmails] = useState<Set<string>>(new Set());
   const [emailTags, setEmailTags] = useState<Record<string, TagInfo[]>>({});
@@ -814,6 +823,16 @@ export default function EmailPage() {
     return counts;
   }, [visibleEmails, emails, archivedEmails, pinnedEmails, assignments, userEmail, classifications]);
 
+  // Clear selection whenever the user switches folder or filter so a stale
+  // selection from a different list can't drive a bulk action.
+  useEffect(() => {
+    if (selectedIds.size > 0) {
+      setSelectedIds(new Set());
+      lastSelectedRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folder, emailFilter]);
+
   const filteredEmails = useMemo(() => {
     switch (emailFilter) {
       case "direct": return visibleEmails.filter(e => isUserInTo(e, userEmail) && !isUserInCc(e, userEmail));
@@ -843,6 +862,148 @@ export default function EmailPage() {
       return { latest: sorted[0], emails: sorted.reverse(), count: sorted.length, conversationId: sorted[0].conversationId || sorted[0].id };
     }).sort((a, b) => new Date(b.latest.date).getTime() - new Date(a.latest.date).getTime());
   }, [filteredEmails]);
+
+  // ---- Multi-select handlers (declared after threads so range-select can
+  // reference the visible order) ----
+  const toggleSelect = useCallback((id: string, shiftKey: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      const last = lastSelectedRef.current;
+      if (shiftKey && last && last !== id) {
+        const ids = threads.map((t) => t.latest.id);
+        const startIdx = ids.indexOf(last);
+        const endIdx = ids.indexOf(id);
+        if (startIdx >= 0 && endIdx >= 0) {
+          const [a, b] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+          const turnOn = !prev.has(id);
+          for (let i = a; i <= b; i++) {
+            if (turnOn) next.add(ids[i]);
+            else next.delete(ids[i]);
+          }
+        } else if (next.has(id)) {
+          next.delete(id);
+        } else {
+          next.add(id);
+        }
+      } else if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+    lastSelectedRef.current = id;
+  }, [threads]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+    lastSelectedRef.current = null;
+  }, []);
+
+  const selectAllVisible = useCallback(() => {
+    setSelectedIds(new Set(threads.map((t) => t.latest.id)));
+  }, [threads]);
+
+  // Run an async per-id action across the selected set, with bounded
+  // concurrency so we don't overwhelm Graph or hit rate limits. Returns
+  // the count of successes.
+  const runBulkAction = useCallback(
+    async (label: string, action: (id: string) => Promise<unknown>) => {
+      if (selectedIds.size === 0 || bulkBusy) return;
+      const ids = Array.from(selectedIds);
+      setBulkBusy(true);
+      const toastId = toast.loading(`${label}: 0 / ${ids.length}`);
+      let done = 0;
+      let failed = 0;
+      const concurrency = 8;
+      try {
+        for (let i = 0; i < ids.length; i += concurrency) {
+          const slice = ids.slice(i, i + concurrency);
+          const results = await Promise.allSettled(slice.map(action));
+          for (const r of results) {
+            if (r.status === "fulfilled") done++;
+            else failed++;
+          }
+          toast.loading(`${label}: ${done + failed} / ${ids.length}`, { id: toastId });
+        }
+      } finally {
+        setBulkBusy(false);
+      }
+      if (failed === 0) {
+        toast.success(`${label}: ${done} ${done === 1 ? "email" : "emails"}`, { id: toastId });
+      } else {
+        toast.error(`${label}: ${done} ok, ${failed} failed`, { id: toastId });
+      }
+      clearSelection();
+    },
+    [selectedIds, bulkBusy, clearSelection],
+  );
+
+  async function bulkArchive() {
+    await runBulkAction("Archived", async (id) => {
+      const res = await fetch("/api/email-sync", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email_id: id, user_email: userEmail, action: "archive" }),
+      });
+      if (!res.ok) throw new Error("archive failed");
+      // Optimistic local state update so the card disappears immediately.
+      setArchivedEmails((prev) => new Set([...prev, id]));
+      setEmails((prev) => prev.filter((e) => e.id !== id));
+    });
+  }
+
+  async function bulkDelete() {
+    if (!confirm(`Delete ${selectedIds.size} email${selectedIds.size === 1 ? "" : "s"}?`)) return;
+    await runBulkAction("Deleted", async (id) => {
+      const res = await fetch("/api/email-sync", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email_id: id, user_email: userEmail, action: "delete" }),
+      });
+      if (!res.ok) throw new Error("delete failed");
+      setEmails((prev) => prev.filter((e) => e.id !== id));
+    });
+  }
+
+  async function bulkMarkRead() {
+    await runBulkAction("Marked read", async (id) => {
+      const res = await fetch("/api/email-sync", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email_id: id, user_email: userEmail, action: "mark_read" }),
+      });
+      if (!res.ok) throw new Error("mark_read failed");
+      setEmails((prev) => prev.map((e) => (e.id === id ? { ...e, isRead: true } : e)));
+    });
+  }
+
+  async function bulkMarkUnread() {
+    await runBulkAction("Marked unread", async (id) => {
+      const res = await fetch("/api/email-sync", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email_id: id, user_email: userEmail, action: "mark_unread" }),
+      });
+      if (!res.ok) throw new Error("mark_unread failed");
+      setEmails((prev) => prev.map((e) => (e.id === id ? { ...e, isRead: false } : e)));
+    });
+  }
+
+  async function bulkSetCategory(category: string) {
+    await runBulkAction(`Set category: ${category}`, async (id) => {
+      const res = await fetch("/api/classify-email", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email_id: id, override_category: category }),
+      });
+      if (!res.ok) throw new Error("override failed");
+      setClassifications((prev: Record<string, any>) => ({
+        ...prev,
+        [id]: { ...(prev[id] || {}), category },
+      }));
+    });
+  }
 
   const selectedThread = useMemo(() => {
     if (!selected) return null;
@@ -1562,6 +1723,47 @@ export default function EmailPage() {
     )
   );
 
+  // Bulk action bar JSX. Rendered inside EntityList when selectedIds has
+  // anything in it. Buttons map to the bulk* handlers. Categorize is a
+  // dropdown so the user can pick from the full 12-category vocab.
+  const [showBulkCategorize, setShowBulkCategorize] = useState(false);
+  const bulkBarJSX = (
+    <div className="flex items-center gap-1.5 px-3 py-2 text-xs">
+      <span className="font-medium">{selectedIds.size} selected</span>
+      <span className="text-white/50 mx-1">·</span>
+      <button onClick={selectAllVisible} className="text-white/80 hover:text-white underline" disabled={bulkBusy}>Select all visible</button>
+      <span className="text-white/50 mx-1">·</span>
+      <button onClick={bulkArchive} disabled={bulkBusy} className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50">Archive</button>
+      <button onClick={bulkDelete} disabled={bulkBusy} className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50">Delete</button>
+      <button onClick={bulkMarkRead} disabled={bulkBusy} className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50">Mark read</button>
+      <button onClick={bulkMarkUnread} disabled={bulkBusy} className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50">Mark unread</button>
+      <div className="relative">
+        <button onClick={() => setShowBulkCategorize((v) => !v)} disabled={bulkBusy} className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50">Categorize ▾</button>
+        {showBulkCategorize && (
+          <div
+            className="absolute z-30 left-0 top-full mt-1 w-48 bg-white text-zinc-700 rounded-lg shadow-lg p-1"
+            onMouseLeave={() => setShowBulkCategorize(false)}
+          >
+            {Object.keys(CATEGORY_CONFIG).map((key) => {
+              const item = formatCategory(key);
+              return (
+                <button
+                  key={key}
+                  onClick={() => { setShowBulkCategorize(false); void bulkSetCategory(key); }}
+                  className="w-full text-left flex items-center px-2 py-1.5 rounded text-[11px] hover:bg-zinc-100"
+                >
+                  <span className={`inline-flex px-1.5 py-0.5 rounded-full text-[10px] ${item.className}`}>{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      <span className="ml-auto" />
+      <button onClick={clearSelection} disabled={bulkBusy} className="px-2 py-0.5 rounded text-white/80 hover:text-white hover:bg-white/10 disabled:opacity-50">Clear</button>
+    </div>
+  );
+
   const replyBarElement = selected && !showCompose ? (
     <ReplyBar
       ref={replyBarRef}
@@ -1613,6 +1815,9 @@ export default function EmailPage() {
             onSnooze={(id, until, label) => { if (label === "__close__") { setSnoozeDropdownId(null); } else { snoozeEmail(id, until, label); setSnoozeDropdownId(null); } }}
             swipeRightAction="archive"
             swipeLeftAction="delete"
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelect}
+            bulkActionBar={bulkBarJSX}
           />
         }
         threadHeader={

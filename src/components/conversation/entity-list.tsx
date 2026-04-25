@@ -46,6 +46,14 @@ type Props = {
   swipeRightAction?: SwipeAction;
   snoozeDropdownId?: string | null;
   onSnooze?: (itemId: string, until: Date, label: string) => void;
+  // Multi-select. When selectedIds is provided, each card renders a leading
+  // checkbox. onToggleSelect fires on click; the second arg is true when
+  // the user held shift (caller handles range-select against the last
+  // toggled id). bulkActionBar is rendered above the list and stays visible
+  // for as long as any item is selected.
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string, shiftKey: boolean) => void;
+  bulkActionBar?: React.ReactNode;
 };
 
 const SWIPE_COLORS: Record<SwipeAction, string> = {
@@ -137,7 +145,7 @@ function SwipeableItem({
 export function EntityList({
   header, selector, primaryAction, filterTabs, activeFilter, onFilterChange,
   items, activeId, onSelect, loading, footer, quickActions, swipeLeftAction, swipeRightAction,
-  snoozeDropdownId, onSnooze,
+  snoozeDropdownId, onSnooze, selectedIds, onToggleSelect, bulkActionBar,
 }: Props) {
 
   function getSwipeHandler(action: SwipeAction | undefined, itemId: string) {
@@ -181,6 +189,15 @@ export function EntityList({
         </div>
       )}
 
+      {/* Bulk action bar - shown when caller passes selectedIds with any
+          items selected. Lives above the list so it doesn't scroll out
+          of view when the user picks more items lower down. */}
+      {bulkActionBar && selectedIds && selectedIds.size > 0 && (
+        <div className="shrink-0 border-b bg-zinc-900 text-white">
+          {bulkActionBar}
+        </div>
+      )}
+
       {/* Items */}
       <div className="flex-1 overflow-y-auto">
         {loading ? (
@@ -196,6 +213,8 @@ export function EntityList({
         ) : (
           items.map(item => {
             const isActive = activeId === item.id;
+            const isSelected = selectedIds?.has(item.id) ?? false;
+            const selectionEnabled = !!onToggleSelect;
             return (
               <SwipeableItem
                 key={item.id}
@@ -207,14 +226,51 @@ export function EntityList({
                 <button
                   onClick={() => onSelect(item.id)}
                   className={`w-full text-left px-3 py-2.5 border-b border-l-2 ${
-                    isActive
-                      ? "bg-zinc-100 border-l-zinc-900"
-                      : item.isUnread
-                        ? "bg-white border-l-transparent transition-colors hover:border-l-zinc-300 hover:bg-zinc-50"
-                        : "bg-zinc-50/30 border-l-transparent transition-colors hover:border-l-zinc-300 hover:bg-zinc-50"
+                    isSelected
+                      ? "bg-blue-50/40 border-l-blue-500"
+                      : isActive
+                        ? "bg-zinc-100 border-l-zinc-900"
+                        : item.isUnread
+                          ? "bg-white border-l-transparent transition-colors hover:border-l-zinc-300 hover:bg-zinc-50"
+                          : "bg-zinc-50/30 border-l-transparent transition-colors hover:border-l-zinc-300 hover:bg-zinc-50"
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
+                    {selectionEnabled && (
+                      <span
+                        // The button is the parent click target (opens email),
+                        // so the checkbox needs to stop propagation. We use
+                        // a span (not nested button - illegal) styled as a
+                        // checkbox + onMouseDown to avoid a 200ms button
+                        // focus delay flicker on click.
+                        role="checkbox"
+                        tabIndex={0}
+                        aria-checked={isSelected}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          onToggleSelect?.(item.id, e.shiftKey);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === " " || e.key === "Enter") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onToggleSelect?.(item.id, e.shiftKey);
+                          }
+                        }}
+                        className={`mt-0.5 shrink-0 w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors cursor-pointer ${
+                          isSelected
+                            ? "bg-blue-500 border-blue-500 text-white"
+                            : "bg-white border-zinc-300 hover:border-zinc-400 opacity-60 group-hover:opacity-100"
+                        }`}
+                      >
+                        {isSelected && (
+                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        )}
+                      </span>
+                    )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         {item.statusDot && (

@@ -4,6 +4,13 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### Bulk email actions
+
+- Multi-select on the email list. Hover any card to reveal a checkbox; click to toggle. Shift-click range-selects from the last toggled card to the clicked one (Outlook / Gmail behaviour). Selection clears automatically when you switch folder or filter, so a stale selection can't drive an unrelated bulk action.
+- New floating action bar above the list shows live `{N} selected` plus: Select all visible, Archive, Delete (confirms first), Mark read, Mark unread, Categorize (full 12-category dropdown using the existing user-override plumbing - so bulk corrections feed the LEARNING FROM PAST CORRECTIONS prompt block too), Clear.
+- `runBulkAction` fans out to existing per-email APIs with a Promise.allSettled batch of 8 concurrent requests, surfaces a live progress toast (`Archived: 24 / 75`), and reports per-row success/failure on completion. Optimistic local state update on success: archived/deleted rows disappear immediately, mark-read flips the unread dot.
+- New `selectedIds` / `onToggleSelect` / `bulkActionBar` props on EntityList. Backwards compatible - any existing list without selection wiring renders exactly as before.
+
 ### Networks
 
 - New `freight_networks` directory: WCA, Globalia, JCtrans, X2, Cargo Connections, WPC, PCN, FIATA, Conqueror, WIN, Cooperative Logistics, AeroAfrica seeded out of the box. Each row tracks `name`, `primary_domain`, `additional_domains[]`, `relationship` (member / non-member / prospect / declined), `network_type` (general / project_cargo / specialised / association), `annual_fee_gbp`, `events_per_year`, `website`, `notes`. Migration `014_freight_networks.sql` with GIN index on additional_domains and an updated_at trigger.
