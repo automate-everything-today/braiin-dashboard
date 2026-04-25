@@ -6,6 +6,7 @@ import type { ConversationMessage } from "@/types";
 import { RelevanceTagChips } from "@/components/email/relevance-tags";
 import { ConversationStagePicker } from "@/components/email/conversation-stage-picker";
 import { CategoryPicker } from "@/components/email/category-picker";
+import { AILearningPanel } from "@/components/email/ai-learning-panel";
 import { isConversationStage, type ConversationStage } from "@/lib/conversation-stages";
 
 // Exported for testing
@@ -550,6 +551,7 @@ function AiBubble({ msg }: { msg: ConversationMessage }) {
               ))}
             </div>
           )}
+          {msg.isManager && <AILearningPanel />}
           <p className="text-[9px] text-zinc-400 mt-1 text-right">{formatMessageTime(msg.timestamp)}</p>
         </div>
       </div>

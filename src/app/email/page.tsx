@@ -1368,6 +1368,7 @@ export default function EmailPage() {
           }
         },
         category: cls.category,
+        isManager: !!session?.is_manager,
         onCategoryChange: async (next: string) => {
           const prev = cls.category;
           setClassifications((prevState: Record<string, any>) => ({

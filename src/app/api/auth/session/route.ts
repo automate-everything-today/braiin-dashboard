@@ -10,11 +10,12 @@ export async function GET() {
   // Fetch latest access from staff table
   let pageAccess: string[] = [];
   let accessRole = data.role || "viewer";
+  let isManager = false;
 
   if (data.staff_id) {
     const { data: staff, error } = await supabase
       .from("staff")
-      .select("access_role, page_access")
+      .select("access_role, page_access, is_manager")
       .eq("id", data.staff_id)
       .single();
 
@@ -23,6 +24,7 @@ export async function GET() {
     }
     if (staff) {
       accessRole = staff.access_role || accessRole;
+      isManager = !!staff.is_manager;
       // page_access is stored as jsonb and the schema doesn't pin the shape.
       // Narrow to string[] at the boundary.
       if (Array.isArray(staff.page_access)) {
@@ -39,6 +41,7 @@ export async function GET() {
     department: data.department,
     branch: data.branch,
     is_staff: data.is_staff,
+    is_manager: isManager,
     staff_id: data.staff_id,
     page_access: pageAccess,
   });

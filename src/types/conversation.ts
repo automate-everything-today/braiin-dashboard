@@ -59,6 +59,10 @@ export interface ConversationMessage {
   // via PUT user_override_category and feeds the classifier's "LEARNING
   // FROM PAST CORRECTIONS" block on future classify-email calls.
   onCategoryChange?: (next: string) => Promise<void> | void;
+  // When true the AI bubble renders a manager-only "what's the AI
+  // learning from?" panel below the suggestions. Set from the email
+  // page's session.is_manager.
+  isManager?: boolean;
 }
 
 export interface Channel {

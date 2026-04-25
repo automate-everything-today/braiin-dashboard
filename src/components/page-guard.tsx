@@ -11,6 +11,7 @@ type Session = {
   department?: string;
   branch?: string;
   is_staff?: boolean;
+  is_manager?: boolean;
   staff_id?: number;
   page_access?: string[];
 };
