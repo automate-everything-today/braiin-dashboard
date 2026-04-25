@@ -915,16 +915,31 @@ export default function EmailPage() {
       const toastId = toast.loading(`${label}: 0 / ${ids.length}`);
       let done = 0;
       let failed = 0;
-      const concurrency = 8;
+      let firstError: string | null = null;
+      // Concurrency 3 keeps us friendly to Microsoft Graph's per-mailbox
+      // throttling (which kicks in at roughly 4-10 concurrent requests
+      // depending on the operation). Total throughput is plenty for
+      // 75-100 emails - the bottleneck is Graph latency, not parallelism.
+      const concurrency = 3;
       try {
         for (let i = 0; i < ids.length; i += concurrency) {
           const slice = ids.slice(i, i + concurrency);
           const results = await Promise.allSettled(slice.map(action));
           for (const r of results) {
-            if (r.status === "fulfilled") done++;
-            else failed++;
+            if (r.status === "fulfilled") {
+              done++;
+            } else {
+              failed++;
+              if (!firstError) firstError = r.reason instanceof Error ? r.reason.message : String(r.reason);
+            }
           }
           toast.loading(`${label}: ${done + failed} / ${ids.length}`, { id: toastId });
+          // Small breather between batches so Graph doesn't see a sustained
+          // burst. 150ms is invisible to the user but enough for Graph's
+          // sliding window to relax.
+          if (i + concurrency < ids.length) {
+            await new Promise((r) => setTimeout(r, 150));
+          }
         }
       } finally {
         setBulkBusy(false);
@@ -932,12 +947,28 @@ export default function EmailPage() {
       if (failed === 0) {
         toast.success(`${label}: ${done} ${done === 1 ? "email" : "emails"}`, { id: toastId });
       } else {
-        toast.error(`${label}: ${done} ok, ${failed} failed`, { id: toastId });
+        toast.error(
+          `${label}: ${done} ok, ${failed} failed${firstError ? ` - ${firstError}` : ""}`,
+          { id: toastId, duration: 8000 },
+        );
       }
       clearSelection();
     },
     [selectedIds, bulkBusy, clearSelection],
   );
+
+  // Helper: extracts the server's error message from a non-OK response so
+  // bulk failures surface a real reason (e.g. "Graph 404", "rate limited")
+  // instead of a generic "X failed" toast.
+  async function describeFailure(res: Response, fallback: string): Promise<string> {
+    try {
+      const body = await res.json();
+      if (body?.error) return `${res.status}: ${body.error}`;
+    } catch {
+      /* not JSON, fall through */
+    }
+    return `${res.status} ${res.statusText || fallback}`;
+  }
 
   async function bulkArchive() {
     await runBulkAction("Archived", async (id) => {
@@ -946,8 +977,7 @@ export default function EmailPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email_id: id, user_email: userEmail, action: "archive" }),
       });
-      if (!res.ok) throw new Error("archive failed");
-      // Optimistic local state update so the card disappears immediately.
+      if (!res.ok) throw new Error(await describeFailure(res, "archive failed"));
       setArchivedEmails((prev) => new Set([...prev, id]));
       setEmails((prev) => prev.filter((e) => e.id !== id));
     });
@@ -961,7 +991,7 @@ export default function EmailPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email_id: id, user_email: userEmail, action: "delete" }),
       });
-      if (!res.ok) throw new Error("delete failed");
+      if (!res.ok) throw new Error(await describeFailure(res, "delete failed"));
       setEmails((prev) => prev.filter((e) => e.id !== id));
     });
   }
@@ -973,7 +1003,7 @@ export default function EmailPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email_id: id, user_email: userEmail, action: "mark_read" }),
       });
-      if (!res.ok) throw new Error("mark_read failed");
+      if (!res.ok) throw new Error(await describeFailure(res, "mark_read failed"));
       setEmails((prev) => prev.map((e) => (e.id === id ? { ...e, isRead: true } : e)));
     });
   }
@@ -985,7 +1015,7 @@ export default function EmailPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email_id: id, user_email: userEmail, action: "mark_unread" }),
       });
-      if (!res.ok) throw new Error("mark_unread failed");
+      if (!res.ok) throw new Error(await describeFailure(res, "mark_unread failed"));
       setEmails((prev) => prev.map((e) => (e.id === id ? { ...e, isRead: false } : e)));
     });
   }
