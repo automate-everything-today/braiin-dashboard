@@ -12,13 +12,13 @@ import {
 
 const DEPT_STYLE = "bg-blue-50 text-blue-700 border-blue-200";
 
-// Mode icons + colour pairs. Same palette across the app so a blue plane
-// always means Air etc. (matches entity-list MODE_ICON).
+// Mode icons - no background, just coloured glyph. Same palette across
+// the app so a blue plane always means Air (matches entity-list MODE_ICON).
 const MODE_ICON: Record<string, { Icon: React.ComponentType<{ size?: number; className?: string }>; tone: string }> = {
-  Air: { Icon: Plane, tone: "text-blue-600 bg-blue-50 border-blue-200" },
-  Sea: { Icon: Ship, tone: "text-green-600 bg-green-50 border-green-200" },
-  Road: { Icon: Truck, tone: "text-red-600 bg-red-50 border-red-200" },
-  Warehousing: { Icon: Warehouse, tone: "text-orange-600 bg-orange-50 border-orange-200" },
+  Air: { Icon: Plane, tone: "text-blue-600" },
+  Sea: { Icon: Ship, tone: "text-green-600" },
+  Road: { Icon: Truck, tone: "text-red-600" },
+  Warehousing: { Icon: Warehouse, tone: "text-orange-600" },
 };
 
 type Props = {
@@ -110,9 +110,9 @@ export function RelevanceTagChips({
             <span
               key={tag}
               title={`${tag}${isOverride ? " - manually set" : " - detected by AI"}`}
-              className={`inline-flex items-center justify-center ${size === "xs" ? "w-4 h-4" : "w-5 h-5"} rounded border ${tone} ${isOverride ? "ring-1 ring-offset-0" : ""}`}
+              className={`inline-flex items-center justify-center ${tone}`}
             >
-              <Icon size={size === "xs" ? 9 : 11} />
+              <Icon size={size === "xs" ? 14 : 16} />
             </span>
           );
         }

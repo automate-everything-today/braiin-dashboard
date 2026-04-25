@@ -8,15 +8,15 @@ import { Badge } from "@/components/ui/badge";
 import { Clock, Trash2, Archive, AlertTriangle, Tag, Plane, Ship, Truck, Warehouse } from "lucide-react";
 
 /**
- * Tiny pill icons for the freight modes. One mode = one colour, fixed
+ * Mode icons - one icon per freight mode, no background. Fixed colour
  * across the whole app so muscle memory builds: blue plane, green ship,
  * red truck, orange warehouse.
  */
 const MODE_ICON: Record<string, { Icon: React.ComponentType<{ size?: number; className?: string }>; tone: string; title: string }> = {
-  Air: { Icon: Plane, tone: "text-blue-600 bg-blue-50 border-blue-200", title: "Air" },
-  Sea: { Icon: Ship, tone: "text-green-600 bg-green-50 border-green-200", title: "Sea" },
-  Road: { Icon: Truck, tone: "text-red-600 bg-red-50 border-red-200", title: "Road" },
-  Warehousing: { Icon: Warehouse, tone: "text-orange-600 bg-orange-50 border-orange-200", title: "Warehousing" },
+  Air: { Icon: Plane, tone: "text-blue-600", title: "Air" },
+  Sea: { Icon: Ship, tone: "text-green-600", title: "Sea" },
+  Road: { Icon: Truck, tone: "text-red-600", title: "Road" },
+  Warehousing: { Icon: Warehouse, tone: "text-orange-600", title: "Warehousing" },
 };
 
 export type SwipeAction = "snooze" | "delete" | "archive" | "exception" | "tag";
@@ -247,9 +247,9 @@ export function EntityList({
                             <span
                               key={i}
                               title={title}
-                              className={`inline-flex items-center justify-center w-4 h-4 mt-0.5 rounded border ${tone}`}
+                              className={`inline-flex items-center justify-center mt-0.5 ${tone}`}
                             >
-                              <Icon size={9} />
+                              <Icon size={14} />
                             </span>
                           );
                         }
