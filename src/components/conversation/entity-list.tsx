@@ -5,7 +5,19 @@ import { useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { EntityListItem, FilterTab } from "@/types";
 import { Badge } from "@/components/ui/badge";
-import { Clock, Trash2, Archive, AlertTriangle, Tag } from "lucide-react";
+import { Clock, Trash2, Archive, AlertTriangle, Tag, Plane, Ship, Truck, Warehouse } from "lucide-react";
+
+/**
+ * Tiny pill icons for the freight modes. One mode = one colour, fixed
+ * across the whole app so muscle memory builds: blue plane, green ship,
+ * red truck, orange warehouse.
+ */
+const MODE_ICON: Record<string, { Icon: React.ComponentType<{ size?: number; className?: string }>; tone: string; title: string }> = {
+  Air: { Icon: Plane, tone: "text-blue-600 bg-blue-50 border-blue-200", title: "Air" },
+  Sea: { Icon: Ship, tone: "text-green-600 bg-green-50 border-green-200", title: "Sea" },
+  Road: { Icon: Truck, tone: "text-red-600 bg-red-50 border-red-200", title: "Road" },
+  Warehousing: { Icon: Warehouse, tone: "text-orange-600 bg-orange-50 border-orange-200", title: "Warehousing" },
+};
 
 export type SwipeAction = "snooze" | "delete" | "archive" | "exception" | "tag";
 
@@ -226,15 +238,32 @@ export function EntityList({
                           </div>
                         </div>
                       )}
-                      {item.badges?.map((badge, i) => (
-                        badge.variant === "tag" ? (
-                          <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 mt-0.5 rounded-full bg-zinc-900 text-white text-[7px] font-semibold tracking-wide">
-                            <span className="w-1 h-1 rounded-full bg-white/60" />{badge.label}
-                          </span>
-                        ) : (
+                      {item.badges?.map((badge, i) => {
+                        if (badge.variant === "mode-icon") {
+                          const cfg = MODE_ICON[badge.label];
+                          if (!cfg) return null;
+                          const { Icon, tone, title } = cfg;
+                          return (
+                            <span
+                              key={i}
+                              title={title}
+                              className={`inline-flex items-center justify-center w-4 h-4 mt-0.5 rounded border ${tone}`}
+                            >
+                              <Icon size={9} />
+                            </span>
+                          );
+                        }
+                        if (badge.variant === "tag") {
+                          return (
+                            <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 mt-0.5 rounded-full bg-zinc-900 text-white text-[7px] font-semibold tracking-wide">
+                              <span className="w-1 h-1 rounded-full bg-white/60" />{badge.label}
+                            </span>
+                          );
+                        }
+                        return (
                           <Badge key={i} variant="secondary" className={`text-[7px] mt-0.5 ${badge.color}`}>{badge.label}</Badge>
-                        )
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </button>

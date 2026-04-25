@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Plane, Ship, Truck, Warehouse } from "lucide-react";
 import {
   DEPARTMENT_TAGS,
   MODE_TAGS,
@@ -10,7 +11,15 @@ import {
 } from "@/lib/relevance-tags";
 
 const DEPT_STYLE = "bg-blue-50 text-blue-700 border-blue-200";
-const MODE_STYLE = "bg-violet-50 text-violet-700 border-violet-200";
+
+// Mode icons + colour pairs. Same palette across the app so a blue plane
+// always means Air etc. (matches entity-list MODE_ICON).
+const MODE_ICON: Record<string, { Icon: React.ComponentType<{ size?: number; className?: string }>; tone: string }> = {
+  Air: { Icon: Plane, tone: "text-blue-600 bg-blue-50 border-blue-200" },
+  Sea: { Icon: Ship, tone: "text-green-600 bg-green-50 border-green-200" },
+  Road: { Icon: Truck, tone: "text-red-600 bg-red-50 border-red-200" },
+  Warehousing: { Icon: Warehouse, tone: "text-orange-600 bg-orange-50 border-orange-200" },
+};
 
 type Props = {
   aiTags: string[];
@@ -94,17 +103,29 @@ export function RelevanceTagChips({
           + tag
         </button>
       )}
-      {effective.map((tag) => (
-        <span
-          key={tag}
-          className={`${padding} rounded-full border ${
-            isDepartmentTag(tag) ? DEPT_STYLE : MODE_STYLE
-          } ${isOverride ? "ring-1 ring-offset-0" : ""}`}
-          title={isOverride ? "Manually set" : "Detected by AI"}
-        >
-          {tag}
-        </span>
-      ))}
+      {effective.map((tag) => {
+        if (!isDepartmentTag(tag) && MODE_ICON[tag]) {
+          const { Icon, tone } = MODE_ICON[tag];
+          return (
+            <span
+              key={tag}
+              title={`${tag}${isOverride ? " - manually set" : " - detected by AI"}`}
+              className={`inline-flex items-center justify-center ${size === "xs" ? "w-4 h-4" : "w-5 h-5"} rounded border ${tone} ${isOverride ? "ring-1 ring-offset-0" : ""}`}
+            >
+              <Icon size={size === "xs" ? 9 : 11} />
+            </span>
+          );
+        }
+        return (
+          <span
+            key={tag}
+            className={`${padding} rounded-full border ${DEPT_STYLE} ${isOverride ? "ring-1 ring-offset-0" : ""}`}
+            title={isOverride ? "Manually set" : "Detected by AI"}
+          >
+            {tag}
+          </span>
+        );
+      })}
       {onChange && (
         <button
           onClick={() => setOpen((v) => !v)}
@@ -157,20 +178,27 @@ export function RelevanceTagChips({
             <span className="text-[9px] uppercase tracking-wide text-zinc-400 w-16 shrink-0">
               Mode
             </span>
-            {MODE_TAGS.map((tag) => (
-              <button
-                key={tag}
-                onClick={() => toggleTag(tag)}
-                disabled={saving}
-                className={`px-2 py-0.5 rounded-full text-[10px] border transition-colors disabled:opacity-50 ${
-                  effective.includes(tag)
-                    ? MODE_STYLE
-                    : "border-zinc-200 text-zinc-500 hover:border-zinc-300"
-                }`}
-              >
-                {tag}
-              </button>
-            ))}
+            {MODE_TAGS.map((tag) => {
+              const cfg = MODE_ICON[tag];
+              const Icon = cfg?.Icon;
+              const active = effective.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  onClick={() => toggleTag(tag)}
+                  disabled={saving}
+                  title={tag}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border transition-colors disabled:opacity-50 ${
+                    active
+                      ? cfg?.tone ?? "border-zinc-200"
+                      : "border-zinc-200 text-zinc-500 hover:border-zinc-300"
+                  }`}
+                >
+                  {Icon && <Icon size={10} />}
+                  {tag}
+                </button>
+              );
+            })}
           </div>
           {isOverride && (
             <div className="flex justify-between items-center pt-1 border-t border-zinc-100">

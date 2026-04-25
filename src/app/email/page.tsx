@@ -874,7 +874,7 @@ export default function EmailPage() {
     return threads.map(thread => {
       const email = thread.latest;
       const a = (assignments as Record<string, any>)?.[email.id];
-      const badges: { label: string; color: string; variant?: "default" | "tag" }[] = [];
+      const badges: { label: string; color: string; variant?: "default" | "tag" | "mode-icon" }[] = [];
       if (email.matchedAccount) badges.push({ label: email.matchedAccount, color: "" });
       // Three-tier pill ordering on a list card:
       //   1. STAGE - loudest, lifecycle signal ("where is this deal?")
@@ -894,12 +894,17 @@ export default function EmailPage() {
       const tagsForCard: string[] = classifications[email.id]?.effective_tags
         ?? classifications[email.id]?.ai_tags
         ?? [];
+      // Modes get rendered as small coloured icons (plane / ship / truck /
+      // warehouse) - faster to scan than text on a dense list. Departments
+      // stay as text since "Ops" / "Sales" / "Accounts" don't have obvious
+      // visual shortcuts.
+      const MODE_TAGS = new Set(["Air", "Road", "Sea", "Warehousing"]);
       for (const t of tagsForCard.slice(0, 3)) {
-        const isMode = ["Air", "Road", "Sea", "Warehousing"].includes(t);
-        badges.push({
-          label: t,
-          color: isMode ? "bg-violet-50 text-violet-700" : "bg-blue-50 text-blue-700",
-        });
+        if (MODE_TAGS.has(t)) {
+          badges.push({ label: t, color: "", variant: "mode-icon" as const });
+        } else {
+          badges.push({ label: t, color: "bg-blue-50 text-blue-700" });
+        }
       }
       if (!hasStage && classifications[email.id]?.category) {
         const cat = formatCategory(classifications[email.id].category);

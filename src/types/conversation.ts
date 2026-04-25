@@ -79,7 +79,7 @@ export interface EntityListItem {
   subtitle: string;
   preview: string;
   timestamp: string;
-  badges?: { label: string; color: string; variant?: "default" | "tag" }[];
+  badges?: { label: string; color: string; variant?: "default" | "tag" | "mode-icon" }[];
   statusDot?: string; // colour or null
   isUnread?: boolean;
   assignee?: { name: string; initials: string } | null;
