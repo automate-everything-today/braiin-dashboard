@@ -54,6 +54,11 @@ export interface ConversationMessage {
   aiConversationStage?: string | null;
   userConversationStage?: string | null;
   onStageChange?: (next: string | null) => Promise<void> | void;
+  // Category override: if onCategoryChange is set, the AI bubble shows the
+  // category as a clickable pill that opens a picker. Override is persisted
+  // via PUT user_override_category and feeds the classifier's "LEARNING
+  // FROM PAST CORRECTIONS" block on future classify-email calls.
+  onCategoryChange?: (next: string) => Promise<void> | void;
 }
 
 export interface Channel {

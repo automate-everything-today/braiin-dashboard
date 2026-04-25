@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import type { ConversationMessage } from "@/types";
 import { RelevanceTagChips } from "@/components/email/relevance-tags";
 import { ConversationStagePicker } from "@/components/email/conversation-stage-picker";
+import { CategoryPicker } from "@/components/email/category-picker";
 import { isConversationStage, type ConversationStage } from "@/lib/conversation-stages";
 
 // Exported for testing
@@ -453,12 +454,30 @@ function AiBubble({ msg }: { msg: ConversationMessage }) {
           )}
           {msg.structured_data && (
             <div className="bg-white rounded-lg p-2.5 mt-2 space-y-1">
-              {Object.entries(msg.structured_data).map(([k, v]) => (
-                <div key={k} className="flex justify-between text-[10px]">
-                  <span className="text-zinc-400">{k}</span>
-                  <span className="font-medium text-zinc-700">{v}</span>
-                </div>
-              ))}
+              {Object.entries(msg.structured_data).map(([k, v]) => {
+                // Replace the static Category row with a clickable picker
+                // when an onCategoryChange handler is provided. The category
+                // string is the snake_case key, not the display label - we
+                // need the structured_data Category value, but msg.category
+                // (snake) is what the picker writes back.
+                if (k === "Category" && msg.onCategoryChange && msg.category) {
+                  return (
+                    <div key={k} className="flex justify-between items-center text-[10px]">
+                      <span className="text-zinc-400">{k}</span>
+                      <CategoryPicker
+                        category={msg.category}
+                        onChange={msg.onCategoryChange}
+                      />
+                    </div>
+                  );
+                }
+                return (
+                  <div key={k} className="flex justify-between text-[10px]">
+                    <span className="text-zinc-400">{k}</span>
+                    <span className="font-medium text-zinc-700">{v}</span>
+                  </div>
+                );
+              })}
             </div>
           )}
           {/* Clickable reply options - one line summaries */}

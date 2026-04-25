@@ -16,6 +16,7 @@ import {
   isConversationStage,
   type ConversationStage,
 } from "@/lib/conversation-stages";
+import { findNetworkByEmail, describeNetworkForPrompt } from "@/lib/freight-networks";
 
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
 const MODEL = "claude-haiku-4-5-20251001";
@@ -36,17 +37,18 @@ CLASSIFICATION CATEGORIES:
 - **fyi** - system notification, automated alert, no action needed
 - **marketing** - newsletter, promotional, marketing email
 - **internal** - from a colleague within the same company
-- **agent_request** - from another freight forwarder requesting rates or partnership info
-- **quote_request** - client or prospect asking us for shipping rates/pricing
+- **agent_request** - from another freight forwarder requesting rates on a SPECIFIC SHIPMENT (commercial transaction). Subject usually mentions a quote, lane, or commodity.
+- **quote_request** - client or prospect asking us for shipping rates/pricing on a SPECIFIC SHIPMENT
 - **rfq** - formal request for quotation (structured rate request, often with specific requirements)
 - **rates** - rate sheet, tariff update, pricing notification from a carrier or agent
 - **recruiter** - recruitment agency, job offer, talent sourcing email
+- **network** - from a freight forwarding NETWORK or trade association (WCA, Globalia, JCtrans, X2, FIATA, project cargo networks etc.). Their business is membership and events. Typical content: invitations to join the network, conference/AGM/regional event invitations, member directory updates, network newsletters, match-making introductions to other members. NOT a client asking us to ship cargo. If a SENDER NETWORK MATCH block is present in the user message, this category is almost certainly correct.
 
 PRIORITY: urgent, high, normal, low
 
 OUTPUT SCHEMA:
 {
-  "category": "direct|action|cc|fyi|marketing|internal|agent_request|quote_request|rfq|rates|recruiter",
+  "category": "direct|action|cc|fyi|marketing|internal|agent_request|quote_request|rfq|rates|recruiter|network",
   "priority": "urgent|high|normal|low",
   "summary": "One sentence summary of what this email is about",
   "suggested_action": "What the user should do (or 'No action needed')",
@@ -396,6 +398,16 @@ export async function POST(req: Request) {
     ? `SENDER TAG HISTORY (strong hints for 'tags' output - users have repeatedly assigned these to mail from ${senderDomain || from_email}):\n${topTagPatterns.map((p) => `- ${p.tag} (manually applied ${p.counts.overrides}x, confirmed ${p.counts.thumbsUp}x)`).join("\n")}\n`
     : "";
 
+  // Network match: if the sender's domain belongs to a known freight
+  // network (WCA, Globalia, JCtrans, etc.) we tell the model directly so
+  // these emails stop getting bucketed as quote_request / agent_request.
+  // Networks are membership organisations - their email is about events
+  // and joining, not about shipping cargo.
+  const matchedNetwork = await findNetworkByEmail(from_email || "");
+  const networkBlock = matchedNetwork
+    ? `SENDER NETWORK MATCH: this sender's domain belongs to a freight network. Set category=network. Network: ${describeNetworkForPrompt(matchedNetwork)}.\n`
+    : "";
+
   // Load user's actual reply samples to learn their voice and approach
   const { data: writingSamples } = await supabase.from("ai_writing_samples")
     .select("original_email_subject, actual_reply, ai_suggested_reply, used_suggestion")
@@ -455,7 +467,7 @@ export async function POST(req: Request) {
   // Build the per-email user message. System prompt (the big rulebook) is
   // separate and cached; only this dynamic part pays full token cost on
   // every call.
-  const userMessage = `${voiceBlock}${feedbackContext ? `LEARNING FROM PAST CORRECTIONS:\n${feedbackContext}\n\n` : ""}${senderPattern ? `SENDER HISTORY: ${senderPattern}\n\n` : ""}${tagHistoryBlock ? `${tagHistoryBlock}\n` : ""}${writingContext ? `USER'S ACTUAL REPLY STYLE:\n${writingContext}\n\n` : ""}EMAIL:
+  const userMessage = `${voiceBlock}${feedbackContext ? `LEARNING FROM PAST CORRECTIONS:\n${feedbackContext}\n\n` : ""}${senderPattern ? `SENDER HISTORY: ${senderPattern}\n\n` : ""}${networkBlock ? `${networkBlock}\n` : ""}${tagHistoryBlock ? `${tagHistoryBlock}\n` : ""}${writingContext ? `USER'S ACTUAL REPLY STYLE:\n${writingContext}\n\n` : ""}EMAIL:
 From: ${from_name} (${from_email})
 Subject: ${subject}
 To: ${(to || []).join(", ")}

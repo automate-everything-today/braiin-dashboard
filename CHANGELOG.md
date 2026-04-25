@@ -4,6 +4,20 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### Networks
+
+- New `freight_networks` directory: WCA, Globalia, JCtrans, X2, Cargo Connections, WPC, PCN, FIATA, Conqueror, WIN, Cooperative Logistics, AeroAfrica seeded out of the box. Each row tracks `name`, `primary_domain`, `additional_domains[]`, `relationship` (member / non-member / prospect / declined), `network_type` (general / project_cargo / specialised / association), `annual_fee_gbp`, `events_per_year`, `website`, `notes`. Migration `014_freight_networks.sql` with GIN index on additional_domains and an updated_at trigger.
+- New `network` classification category. Distinguishes membership organisations from `agent_request` (forwarder asking for rates on a shipment) and `quote_request` (client asking for rates). Classifier prompt extended with category guidance: networks are membership and events, not commercial transactions.
+- Sender-domain auto-route: when a classify-email request arrives from a domain matching `freight_networks.primary_domain` or `additional_domains`, the prompt gets a `SENDER NETWORK MATCH` block telling Claude this is almost certainly a network email, plus the network's relationship status and type. Stops the classic "WCA invitation got bucketed as a quote request" misfire.
+- New `/networks` page at sidebar position next to Lead Intel: list every known network, edit relationship/fee/notes inline, add new entries, deactivate. Manager + super_admin write access. Header shows total members + total annual fees so you can see what membership costs versus what we're getting.
+- New `/api/networks` route with full CRUD, scoped writes, domain normalisation (strips https:// / www. / trailing slash on save).
+- New `src/lib/freight-networks.ts` exposes `findNetworkByEmail` and `describeNetworkForPrompt` for use across the codebase.
+
+### Classification feedback loop
+
+- Category badge in the AI bubble is now a clickable picker. Pick any of the 12 categories (including the new `network`) to override Claude's classification. Override is persisted via the existing `user_override_category` column and feeds the classifier prompt's "LEARNING FROM PAST CORRECTIONS" block on the next 20 emails - so wrong-category corrections improve future runs without any extra wiring. Optimistic update + rollback on API error, toast confirms with "the AI will learn from this".
+- Same plumbing already in place for stage and tag overrides.
+
 ### Stages
 
 - Thread lifecycle stages: every classified email now carries a `conversation_stage` representing where the thread sits in a freight lifecycle. Thirteen stages, in pipeline order: `lead`, `quote_request`, `awaiting_info`, `quote_sent`, `quote_follow_up`, `quote_secured`, `booked`, `live_shipment`, `exception`, `delivered`, `invoicing`, `paid`, `closed`. Stored lowercase-snake in the DB, displayed title-case in the UI (`Quote Request`, `Waiting Follow-Up`, etc.).

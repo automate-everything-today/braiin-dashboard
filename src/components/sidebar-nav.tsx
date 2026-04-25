@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   TrendingUp, Brain, Users, Lightbulb, Target,
-  Sparkles, Phone, LayoutDashboard, Activity, BarChart3, Trophy, UserCog, Shield, Settings, Kanban, CheckSquare, Mail, MessageSquare, AlertTriangle, GitBranch,
+  Sparkles, Phone, LayoutDashboard, Activity, BarChart3, Trophy, UserCog, Shield, Settings, Kanban, CheckSquare, Mail, MessageSquare, AlertTriangle, GitBranch, Globe,
 } from "lucide-react";
 
 const nav = [
@@ -20,6 +20,7 @@ const nav = [
   { href: "/performance", label: "Performance", icon: TrendingUp },
   { href: "/client-intel", label: "Client Intel", icon: Brain },
   { href: "/clients", label: "Clients", icon: Users },
+  { href: "/networks", label: "Networks", icon: Globe },
   { href: "/lead-intel", label: "Lead Intel", icon: Lightbulb },
   { href: "/prospects", label: "Prospects", icon: Target },
   { href: "/enriched", label: "Enriched", icon: Sparkles },

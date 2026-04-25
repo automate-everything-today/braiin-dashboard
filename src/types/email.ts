@@ -75,6 +75,7 @@ export const CATEGORY_CONFIG: Record<string, { label: string; bg: string; text: 
   rfq: { label: "RFQ", bg: "bg-zinc-100", text: "text-zinc-600" },
   rates: { label: "Rates", bg: "bg-zinc-100", text: "text-zinc-600" },
   recruiter: { label: "Recruiter", bg: "bg-zinc-100", text: "text-zinc-500" },
+  network: { label: "Network", bg: "bg-zinc-100", text: "text-zinc-600" },
 };
 
 export function formatCategory(cat: string): { label: string; className: string } {

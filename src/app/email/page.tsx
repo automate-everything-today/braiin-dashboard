@@ -1158,6 +1158,29 @@ export default function EmailPage() {
             toast.error(`Tag update failed: ${e instanceof Error ? e.message : "unknown error"}`);
           }
         },
+        category: cls.category,
+        onCategoryChange: async (next: string) => {
+          const prev = cls.category;
+          setClassifications((prevState: Record<string, any>) => ({
+            ...prevState,
+            [selected.id]: { ...(prevState[selected.id] || {}), category: next },
+          }));
+          try {
+            const res = await fetch("/api/classify-email", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email_id: selected.id, override_category: next }),
+            });
+            if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+            toast.success("Category updated - the AI will learn from this");
+          } catch (e: unknown) {
+            setClassifications((prevState: Record<string, any>) => ({
+              ...prevState,
+              [selected.id]: { ...(prevState[selected.id] || {}), category: prev },
+            }));
+            toast.error(`Category update failed: ${e instanceof Error ? e.message : "unknown error"}`);
+          }
+        },
         aiConversationStage: cls.ai_conversation_stage ?? null,
         userConversationStage: cls.user_conversation_stage ?? null,
         onStageChange: async (next: string | null) => {

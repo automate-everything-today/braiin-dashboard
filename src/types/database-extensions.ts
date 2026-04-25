@@ -116,6 +116,55 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Migration: 014_freight_networks.sql
+      freight_networks: {
+        Row: {
+          id: number;
+          name: string;
+          primary_domain: string;
+          additional_domains: string[];
+          relationship: "member" | "non-member" | "prospect" | "declined";
+          network_type: "general" | "project_cargo" | "specialised" | "association";
+          annual_fee_gbp: number | null;
+          events_per_year: number | null;
+          website: string | null;
+          notes: string | null;
+          active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          name: string;
+          primary_domain: string;
+          additional_domains?: string[];
+          relationship?: "member" | "non-member" | "prospect" | "declined";
+          network_type?: "general" | "project_cargo" | "specialised" | "association";
+          annual_fee_gbp?: number | null;
+          events_per_year?: number | null;
+          website?: string | null;
+          notes?: string | null;
+          active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: number;
+          name?: string;
+          primary_domain?: string;
+          additional_domains?: string[];
+          relationship?: "member" | "non-member" | "prospect" | "declined";
+          network_type?: "general" | "project_cargo" | "specialised" | "association";
+          annual_fee_gbp?: number | null;
+          events_per_year?: number | null;
+          website?: string | null;
+          notes?: string | null;
+          active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: PublicSchema["Views"];
     Functions: PublicSchema["Functions"];
