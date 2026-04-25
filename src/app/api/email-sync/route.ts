@@ -368,15 +368,19 @@ export async function POST(req: Request) {
   return Response.json({ error: "Failed to send" }, { status: 502 });
 }
 
-// PATCH - archive, delete, or change read state on an email via Graph API
+// PATCH - archive, delete, or change read state on an email via Graph API.
+// Bulk triage (Archive 75 marketing emails in one go) routinely fires 25+
+// PATCH calls in a few seconds, so authenticated callers get a per-user
+// bucket with 300/min cap. Unauthenticated callers stay on the strict
+// 30/min IP default - they shouldn't be hitting this anyway.
 export async function PATCH(req: Request) {
-  if (!(await checkRateLimit(getClientIp(req)))) {
-    return Response.json({ error: "Too many requests" }, { status: 429 });
-  }
-
   const session = await getSession();
   if (!session?.email) {
     return Response.json({ error: "Not authenticated" }, { status: 401 });
+  }
+  const rateBucket = `user:${session.email.toLowerCase()}`;
+  if (!(await checkRateLimit(rateBucket, 300))) {
+    return Response.json({ error: "Too many requests" }, { status: 429 });
   }
 
   const { email_id, user_email, action } = await req.json();
