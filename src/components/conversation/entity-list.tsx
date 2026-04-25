@@ -243,11 +243,13 @@ export function EntityList({
                           const cfg = MODE_ICON[badge.label];
                           if (!cfg) return null;
                           const { Icon, tone, title } = cfg;
+                          // Match the Badge component's h-5 so the icon
+                          // baselines line up with adjacent pills.
                           return (
                             <span
                               key={i}
                               title={title}
-                              className={`inline-flex items-center justify-center mt-0.5 ${tone}`}
+                              className={`inline-flex items-center justify-center h-5 mt-0.5 ${tone}`}
                             >
                               <Icon size={14} />
                             </span>
