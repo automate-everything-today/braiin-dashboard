@@ -4,6 +4,15 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### Cross-team writing-voice corpus
+
+- Classifier reply suggestions now learn from EVERY Corten staff member's recent replies (not just the current user's), so the AI's drafts match the organisation's house style as the team grows. Each sample is attributed by sender name + department in the prompt (e.g. `RE: Felixstowe quote - Adrienne Solyom (Sales) wrote: "..."`) so Claude can pattern-match by role.
+- Privacy guardrails are explicit and per-user. Migration `016_ai_learning_share_team.sql` adds `user_preferences.ai_learning_share_team` (default true) alongside the existing `ai_learning_enabled`. Two toggles in `/profile` -> Preferences -> AI Learning:
+  - **Learn from my emails** (existing): when off, your sent replies are not captured into ai_writing_samples at all. Use for personal / sensitive accounts.
+  - **Share my replies with the team's AI** (new): when off, your captured replies are still used by your own AI but excluded from other staff's classify-email prompt assembly. Use when you want personal learning without your voice spreading across the team.
+- Closes a latent privacy bug. The previous classify-email writingSamples query had no user filter at all - it pulled the most recent 10 samples from anyone, even users who'd opted out of learning. Now the query honours both per-user toggles correctly: a sample is only included if (a) the original sender's `ai_learning_enabled` is true AND (b) `ai_learning_share_team` is true OR the current classify caller is the same staff member.
+- Internal-to-internal replies are now excluded from the corpus. A reply sent to another Corten staff member isn't useful pattern data for client-facing suggestions, and including them risked leaking internal tone (slack-style chitchat) into external drafts. Filter happens client-side after the query so the corpus stays focused on outward-facing voice.
+
 ### Bulk classify (Anthropic Batch API)
 
 - New cost-saver path: bulk reclassify legacy or stale rows via Anthropic's Messages Batches API at ~50% the per-token cost of synchronous calls. The hot-path `/api/classify-email` POST stays sync because it has to be sub-second; this is for backfill / housekeeping where a 5-30 minute turnaround is acceptable (24h SLA).

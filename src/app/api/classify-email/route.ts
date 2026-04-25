@@ -1,6 +1,6 @@
 import { supabase } from "@/services/base";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-import { CUSTOMER } from "@/config/customer";
+import { CUSTOMER, isInternalEmail } from "@/config/customer";
 import { getSession } from "@/lib/session";
 import { stripHtml } from "@/types/email";
 import {
@@ -419,16 +419,97 @@ export async function POST(req: Request) {
     ? `SENDER NETWORK MATCH: this sender's domain belongs to a freight network. Set category=network. Network: ${describeNetworkForPrompt(matchedNetwork)}.\n`
     : "";
 
-  // Load user's actual reply samples to learn their voice and approach
-  const { data: writingSamples } = await supabase.from("ai_writing_samples")
-    .select("original_email_subject, actual_reply, ai_suggested_reply, used_suggestion")
+  // Cross-team writing-voice corpus. Pulls recent reply samples from every
+  // Corten staff member who hasn't opted out, so the AI learns the
+  // organisation's house style - not just one user's. Privacy guardrails:
+  //   1. ai_writing_samples is only populated when the SENDER had
+  //      ai_learning_enabled=true (handled in /api/email-sync POST).
+  //   2. Other staff's classify-email runs only see your samples if you
+  //      ALSO have ai_learning_share_team=true (default true). Set to
+  //      false in /profile to keep your replies private to your own AI.
+  //   3. Each sample carries the sender's name + department in the prompt
+  //      attribution so Claude knows which staff member's voice to learn.
+  const currentUserEmail = (session?.email || "").toLowerCase();
+  const { data: writingSamples } = await supabase
+    .from("ai_writing_samples")
+    .select("user_email, original_email_subject, actual_reply, ai_suggested_reply, used_suggestion, original_email_from")
     .order("created_at", { ascending: false })
-    .limit(10);
+    .limit(60); // pull more then filter client-side - simpler than a join
 
-  const writingContext = (writingSamples || []).length > 0
-    ? (writingSamples || []).map((s: any) =>
-        `RE: ${s.original_email_subject} - User wrote: "${s.actual_reply.slice(0, 150)}"${s.ai_suggested_reply && !s.used_suggestion ? " (ignored AI suggestion)" : ""}`
-      ).join("\n")
+  // Resolve each sample's sender against staff (for dept/name attribution)
+  // and user_preferences (for the share-with-team gate).
+  const sampleEmails = Array.from(
+    new Set(((writingSamples || []) as Array<{ user_email?: string }>)
+      .map((s) => (s.user_email || "").toLowerCase())
+      .filter(Boolean)),
+  );
+  type StaffRow = { email?: string | null; name?: string | null; department?: string | null };
+  type PrefsRow = { email?: string | null; ai_learning_enabled?: boolean | null; ai_learning_share_team?: boolean | null };
+  const [{ data: staffRows }, { data: prefsRows }] = await Promise.all([
+    sampleEmails.length > 0
+      ? supabase.from("staff").select("email, name, department").in("email", sampleEmails)
+      : Promise.resolve({ data: [] as StaffRow[] }),
+    sampleEmails.length > 0
+      ? (supabase.from("user_preferences") as any).select("email, ai_learning_enabled, ai_learning_share_team").in("email", sampleEmails)
+      : Promise.resolve({ data: [] as PrefsRow[] }),
+  ]);
+  const staffByEmail = new Map<string, StaffRow>();
+  for (const r of (staffRows || []) as StaffRow[]) {
+    if (r.email) staffByEmail.set(r.email.toLowerCase(), r);
+  }
+  const prefsByEmail = new Map<string, PrefsRow>();
+  for (const r of (prefsRows || []) as PrefsRow[]) {
+    if (r.email) prefsByEmail.set(r.email.toLowerCase(), r);
+  }
+
+  const eligibleSamples: Array<{
+    user_email: string;
+    senderName: string;
+    senderDept: string | null;
+    actual_reply: string;
+    original_email_subject: string;
+    used_suggestion: boolean;
+  }> = [];
+  for (const s of (writingSamples || []) as Array<{
+    user_email?: string | null;
+    original_email_subject?: string | null;
+    actual_reply?: string | null;
+    ai_suggested_reply?: string | null;
+    used_suggestion?: boolean | null;
+    original_email_from?: string | null;
+  }>) {
+    const sampleSender = (s.user_email || "").toLowerCase();
+    if (!sampleSender || !s.actual_reply) continue;
+    const isSelf = sampleSender === currentUserEmail;
+    const prefs = prefsByEmail.get(sampleSender);
+    const learningOn = prefs?.ai_learning_enabled !== false;
+    const shareOn = prefs?.ai_learning_share_team !== false;
+    if (!learningOn) continue; // honour their opt-out
+    if (!isSelf && !shareOn) continue; // honour their no-share preference
+    // Skip internal-to-internal: replies that went TO another Corten staff
+    // member aren't useful patterns for client-facing reply suggestions.
+    if (isInternalEmail(s.original_email_from || "")) continue;
+    const staff = staffByEmail.get(sampleSender);
+    eligibleSamples.push({
+      user_email: sampleSender,
+      senderName: staff?.name || sampleSender.split("@")[0],
+      senderDept: staff?.department || null,
+      actual_reply: s.actual_reply,
+      original_email_subject: s.original_email_subject || "",
+      used_suggestion: !!s.used_suggestion,
+    });
+    if (eligibleSamples.length >= 12) break;
+  }
+
+  const writingContext = eligibleSamples.length > 0
+    ? eligibleSamples
+        .map((s) => {
+          const attribution = s.senderDept
+            ? `${s.senderName} (${s.senderDept})`
+            : s.senderName;
+          return `RE: ${s.original_email_subject} - ${attribution} wrote: "${s.actual_reply.slice(0, 150)}"`;
+        })
+        .join("\n")
     : "";
 
   const senderPattern = senderHistory?.length

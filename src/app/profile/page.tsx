@@ -21,6 +21,7 @@ type Prefs = {
   phrases_avoid: string;
   timezone: string;
   ai_learning_enabled: boolean;
+  ai_learning_share_team: boolean;
 };
 
 const DEFAULT_PREFS: Prefs = {
@@ -28,6 +29,7 @@ const DEFAULT_PREFS: Prefs = {
   email_tone: "professional", email_signoff: "Kind regards", sample_email: "",
   phrases_use: "", phrases_avoid: "", timezone: "Europe/London",
   ai_learning_enabled: true,
+  ai_learning_share_team: true,
 };
 
 export default function ProfilePage() {
@@ -62,6 +64,7 @@ export default function ProfilePage() {
             phrases_avoid: data.phrases_avoid || "",
             timezone: data.timezone || "Europe/London",
             ai_learning_enabled: data.ai_learning_enabled !== false,
+            ai_learning_share_team: (data as { ai_learning_share_team?: boolean | null }).ai_learning_share_team !== false,
           });
         }
       }
@@ -210,12 +213,24 @@ export default function ProfilePage() {
               <div className="flex items-center justify-between mt-2">
                 <div>
                   <p className="text-xs font-medium">Learn from my emails</p>
-                  <p className="text-[10px] text-zinc-400">When enabled, Braiin learns your writing style from sent emails to improve reply suggestions. Turn off for privacy when handling personal or sensitive emails.</p>
+                  <p className="text-[10px] text-zinc-400">Braiin captures your sent replies and uses them to make YOUR future reply suggestions match your voice. Turn off for privacy when handling personal or sensitive emails.</p>
                 </div>
                 <button
                   onClick={() => setPrefs({ ...prefs, ai_learning_enabled: !prefs.ai_learning_enabled })}
                   className={`w-10 h-5 rounded-full transition-colors relative ${prefs.ai_learning_enabled ? "bg-zinc-900" : "bg-zinc-300"}`}>
                   <div className={`w-4 h-4 bg-white rounded-full absolute top-0.5 transition-transform ${prefs.ai_learning_enabled ? "translate-x-5" : "translate-x-0.5"}`} />
+                </button>
+              </div>
+
+              <div className={`flex items-center justify-between mt-3 ${prefs.ai_learning_enabled ? "" : "opacity-50 pointer-events-none"}`}>
+                <div>
+                  <p className="text-xs font-medium">Share my replies with the team's AI</p>
+                  <p className="text-[10px] text-zinc-400">When on, your captured replies also feed OTHER staff's AI - helping the whole company write in the same voice. Turn off to keep your reply patterns private to your own AI. Requires &quot;Learn from my emails&quot; to be on.</p>
+                </div>
+                <button
+                  onClick={() => setPrefs({ ...prefs, ai_learning_share_team: !prefs.ai_learning_share_team })}
+                  className={`w-10 h-5 rounded-full transition-colors relative ${prefs.ai_learning_share_team ? "bg-zinc-900" : "bg-zinc-300"}`}>
+                  <div className={`w-4 h-4 bg-white rounded-full absolute top-0.5 transition-transform ${prefs.ai_learning_share_team ? "translate-x-5" : "translate-x-0.5"}`} />
                 </button>
               </div>
             </div>
