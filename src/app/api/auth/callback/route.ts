@@ -97,10 +97,18 @@ export async function GET(req: Request) {
   // client_credentials), so putting them in a cookie served only as a leak
   // vector. If user-delegated Graph access is ever needed, store the tokens
   // in a dedicated encrypted table keyed by staff_id - not in the session.
+  // expires_at represents the BRAIIN session's lifetime (8h, matching the
+  // JWT exp claim and cookie maxAge), NOT the Azure access_token's lifetime.
+  // Earlier this was set from Azure's tokenData.expires_in which is typically
+  // 3600s (1h) - meaning the session was being treated as expired after 1
+  // hour even though the JWT was still cryptographically valid for 8h. The
+  // sliding refresh in proxy.ts then extends this on every authenticated
+  // request, so an active user effectively stays signed in indefinitely.
+  const SESSION_TTL_SECONDS = 60 * 60 * 8;
   const session: SessionPayload = {
     email,
     name,
-    expires_at: Date.now() + (tokenData.expires_in || 3600) * 1000,
+    expires_at: Date.now() + SESSION_TTL_SECONDS * 1000,
     staff_id: staff?.id || null,
     role: staff?.role || "viewer",
     department: staff?.department || "",
