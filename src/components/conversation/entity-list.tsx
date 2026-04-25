@@ -191,9 +191,10 @@ export function EntityList({
 
       {/* Bulk action bar - shown when caller passes selectedIds with any
           items selected. Lives above the list so it doesn't scroll out
-          of view when the user picks more items lower down. */}
+          of view when the user picks more items lower down. The caller
+          owns the bar's content so it can match the page's design system. */}
       {bulkActionBar && selectedIds && selectedIds.size > 0 && (
-        <div className="shrink-0 border-b bg-zinc-900 text-white">
+        <div className="shrink-0 border-b bg-white">
           {bulkActionBar}
         </div>
       )}

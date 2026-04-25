@@ -5,7 +5,7 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { isInternalEmail } from "@/config/customer";
 import { CATEGORY_CONFIG } from "@/types/email";
 import {
-  Send, X, RefreshCw, Mail, Paperclip, Pin, Archive, Trash2,
+  Send, X, RefreshCw, Mail, MailOpen, Paperclip, Pin, Archive, Trash2,
   UserPlus, Kanban, Link, Lightbulb, Share2, Forward, Reply, ReplyAll,
   MoreHorizontal, ChevronRight, ThumbsUp, ThumbsDown, Ban, BellOff, MessageSquare, AlertTriangle,
   ChevronDown, Clock, Tag,
@@ -1724,24 +1724,50 @@ export default function EmailPage() {
   );
 
   // Bulk action bar JSX. Rendered inside EntityList when selectedIds has
-  // anything in it. Buttons map to the bulk* handlers. Categorize is a
-  // dropdown so the user can pick from the full 12-category vocab.
+  // anything in it. Buttons map to the bulk* handlers. Compact icon+text
+  // buttons styled to match the email header toolbar (light bg, lucide
+  // icons at 12-13px, hover:bg-zinc-100). The leading X is the deselect.
   const [showBulkCategorize, setShowBulkCategorize] = useState(false);
+  const bulkBarBtn =
+    "inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 transition-colors";
+  const bulkBarBtnDanger =
+    "inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors";
   const bulkBarJSX = (
-    <div className="flex items-center gap-1.5 px-3 py-2 text-xs">
-      <span className="font-medium">{selectedIds.size} selected</span>
-      <span className="text-white/50 mx-1">·</span>
-      <button onClick={selectAllVisible} className="text-white/80 hover:text-white underline" disabled={bulkBusy}>Select all visible</button>
-      <span className="text-white/50 mx-1">·</span>
-      <button onClick={bulkArchive} disabled={bulkBusy} className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50">Archive</button>
-      <button onClick={bulkDelete} disabled={bulkBusy} className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50">Delete</button>
-      <button onClick={bulkMarkRead} disabled={bulkBusy} className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50">Mark read</button>
-      <button onClick={bulkMarkUnread} disabled={bulkBusy} className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50">Mark unread</button>
+    <div className="flex items-center gap-0.5 px-2 py-1.5 text-[11px] flex-wrap">
+      <button
+        onClick={clearSelection}
+        disabled={bulkBusy}
+        title="Clear selection"
+        className="p-1 rounded text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-50"
+      >
+        <X size={12} />
+      </button>
+      <span className="font-medium text-zinc-700 mr-1">{selectedIds.size} selected</span>
+      <button onClick={selectAllVisible} disabled={bulkBusy} className="text-[10px] text-zinc-500 hover:text-zinc-700 underline mr-1">
+        Select all
+      </button>
+      <span className="w-px h-4 bg-zinc-200 mx-1" />
+      <button onClick={bulkArchive} disabled={bulkBusy} className={bulkBarBtn} title="Archive selected">
+        <Archive size={12} /> Archive
+      </button>
+      <button onClick={bulkDelete} disabled={bulkBusy} className={bulkBarBtnDanger} title="Delete selected">
+        <Trash2 size={12} /> Delete
+      </button>
+      <span className="w-px h-4 bg-zinc-200 mx-1" />
+      <button onClick={bulkMarkRead} disabled={bulkBusy} className={bulkBarBtn} title="Mark as read">
+        <MailOpen size={12} /> Read
+      </button>
+      <button onClick={bulkMarkUnread} disabled={bulkBusy} className={bulkBarBtn} title="Mark as unread">
+        <Mail size={12} /> Unread
+      </button>
+      <span className="w-px h-4 bg-zinc-200 mx-1" />
       <div className="relative">
-        <button onClick={() => setShowBulkCategorize((v) => !v)} disabled={bulkBusy} className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-50">Categorize ▾</button>
+        <button onClick={() => setShowBulkCategorize((v) => !v)} disabled={bulkBusy} className={bulkBarBtn} title="Set category">
+          <Tag size={12} /> Category
+        </button>
         {showBulkCategorize && (
           <div
-            className="absolute z-30 left-0 top-full mt-1 w-48 bg-white text-zinc-700 rounded-lg shadow-lg p-1"
+            className="absolute z-30 left-0 top-full mt-1 w-44 bg-white border border-zinc-200 rounded-lg shadow-lg p-1"
             onMouseLeave={() => setShowBulkCategorize(false)}
           >
             {Object.keys(CATEGORY_CONFIG).map((key) => {
@@ -1750,7 +1776,7 @@ export default function EmailPage() {
                 <button
                   key={key}
                   onClick={() => { setShowBulkCategorize(false); void bulkSetCategory(key); }}
-                  className="w-full text-left flex items-center px-2 py-1.5 rounded text-[11px] hover:bg-zinc-100"
+                  className="w-full text-left flex items-center px-2 py-1.5 rounded text-[11px] hover:bg-zinc-50"
                 >
                   <span className={`inline-flex px-1.5 py-0.5 rounded-full text-[10px] ${item.className}`}>{item.label}</span>
                 </button>
@@ -1759,8 +1785,6 @@ export default function EmailPage() {
           </div>
         )}
       </div>
-      <span className="ml-auto" />
-      <button onClick={clearSelection} disabled={bulkBusy} className="px-2 py-0.5 rounded text-white/80 hover:text-white hover:bg-white/10 disabled:opacity-50">Clear</button>
     </div>
   );
 
