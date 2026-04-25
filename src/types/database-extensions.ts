@@ -116,6 +116,49 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Migration: 015_classify_batches.sql
+      classify_batches: {
+        Row: {
+          id: number;
+          anthropic_batch_id: string;
+          email_ids: string[];
+          status: "in_progress" | "completed" | "canceled" | "expired" | "errored";
+          submitted_by: string;
+          submitted_at: string;
+          completed_at: string | null;
+          request_count: number;
+          succeeded_count: number;
+          errored_count: number;
+          notes: string | null;
+        };
+        Insert: {
+          id?: number;
+          anthropic_batch_id: string;
+          email_ids: string[];
+          status?: "in_progress" | "completed" | "canceled" | "expired" | "errored";
+          submitted_by: string;
+          submitted_at?: string;
+          completed_at?: string | null;
+          request_count: number;
+          succeeded_count?: number;
+          errored_count?: number;
+          notes?: string | null;
+        };
+        Update: {
+          id?: number;
+          anthropic_batch_id?: string;
+          email_ids?: string[];
+          status?: "in_progress" | "completed" | "canceled" | "expired" | "errored";
+          submitted_by?: string;
+          submitted_at?: string;
+          completed_at?: string | null;
+          request_count?: number;
+          succeeded_count?: number;
+          errored_count?: number;
+          notes?: string | null;
+        };
+        Relationships: [];
+      };
       // Migration: 014_freight_networks.sql
       freight_networks: {
         Row: {

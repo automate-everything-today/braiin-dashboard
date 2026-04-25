@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/enrich",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/poll-classify-batches",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

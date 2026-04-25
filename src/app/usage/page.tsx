@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { PageGuard } from "@/components/page-guard";
+import { toast } from "sonner";
 
 const SERVICES = [
   { name: "Supabase", desc: "Database (PostgreSQL)", type: "Infrastructure", status: "active", details: "Frankfurt region, Pro plan, Micro compute, RLS enabled", plan: "Pro", cost: 25, billing: "monthly", usage: "382k companies, 9.7k contacts, 29 tables, ~500MB", limit: "8GB database, 250MB file storage" },
@@ -84,6 +86,8 @@ export default function UsagePage() {
     <PageGuard pageId="usage">
     <div>
       <h1 className="text-2xl font-bold mb-4">Usage & Services</h1>
+      <ClassifyBatchPanel />
+
 
       {/* DB Stats */}
       {dbStats && (
@@ -187,5 +191,171 @@ export default function UsagePage() {
       </div>
     </div>
     </PageGuard>
+  );
+}
+
+type ClassifyBatch = {
+  id: number;
+  anthropic_batch_id: string;
+  email_ids: string[];
+  status: "in_progress" | "completed" | "canceled" | "expired" | "errored";
+  submitted_by: string;
+  submitted_at: string;
+  completed_at: string | null;
+  request_count: number;
+  succeeded_count: number;
+  errored_count: number;
+};
+
+/**
+ * Admin panel for the cheap-bulk classify-batch path. Shows recent
+ * batches and a "Re-classify legacy rows" button that picks every email
+ * with NULL ai_tags or ai_conversation_stage and submits them in one
+ * batch to Anthropic at ~50% per-token cost. Cron polls every 5 minutes
+ * and writes results back when ready (typically 5-30 min).
+ */
+function ClassifyBatchPanel() {
+  const [batches, setBatches] = useState<ClassifyBatch[]>([]);
+  const [staleCount, setStaleCount] = useState<number | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function load() {
+    try {
+      const r = await fetch("/api/classify-batch");
+      const d = await r.json();
+      if (r.ok) setBatches(d.batches || []);
+
+      // Count rows that would benefit from a reclassify pass.
+      const { count: missingTags } = await supabase
+        .from("email_classifications")
+        .select("*", { count: "exact", head: true })
+        .is("ai_tags", null);
+      const { count: missingStage } = await supabase
+        .from("email_classifications")
+        .select("*", { count: "exact", head: true })
+        .is("ai_conversation_stage", null);
+      setStaleCount(Math.max(missingTags || 0, missingStage || 0));
+    } catch (e) {
+      console.warn("[usage] load batches failed:", e);
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function submitBackfill() {
+    if (submitting) return;
+    setSubmitting(true);
+    const submittingToast = toast.loading("Finding stale rows...");
+    try {
+      // Query the missing-tags / missing-stage email ids client-side via
+      // RLS-bypassing service role isn't an option here, so use the API.
+      // Pulling them through Supabase JS works because the email_classifications
+      // table is read-allowed.
+      const { data, error } = await supabase
+        .from("email_classifications")
+        .select("email_id, ai_tags, ai_conversation_stage")
+        .or("ai_tags.is.null,ai_conversation_stage.is.null")
+        .limit(1000);
+      if (error) throw new Error(error.message);
+      const ids = (((data || []) as unknown) as Array<{ email_id?: string }>)
+        .map((r) => r.email_id || "")
+        .filter(Boolean);
+      if (ids.length === 0) {
+        toast.success("Nothing to backfill - all rows have tags + stage", { id: submittingToast });
+        return;
+      }
+      toast.loading(`Submitting batch of ${ids.length} emails...`, { id: submittingToast });
+
+      const res = await fetch("/api/classify-batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email_ids: ids }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Batch submission failed");
+      toast.success(
+        `Batch of ${ids.length} submitted - cron will write results when ready (5-30 min typical)`,
+        { id: submittingToast, duration: 8000 },
+      );
+      await load();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Backfill failed", { id: submittingToast });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function pollNow() {
+    const t = toast.loading("Polling open batches...");
+    try {
+      const res = await fetch("/api/classify-batch?all=open");
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Poll failed");
+      toast.success(`Polled ${d.batches?.length ?? 0} batches`, { id: t });
+      await load();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Poll failed", { id: t });
+    }
+  }
+
+  return (
+    <Card className="mb-6">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <CardTitle className="text-sm">Bulk classify (Anthropic Batch API)</CardTitle>
+            <p className="text-[11px] text-zinc-500">
+              Re-classify legacy or stale rows at ~50% the per-token cost. Cron polls every 5 minutes; results land within 5-30 minutes typically (24h SLA).
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              onClick={submitBackfill}
+              disabled={submitting || staleCount === 0}
+              className="bg-[#ff3366] hover:bg-[#e6004d] text-xs"
+            >
+              {submitting ? "Submitting..." : staleCount === null ? "Checking..." : `Reclassify ${staleCount} stale rows`}
+            </Button>
+            <Button size="sm" variant="outline" onClick={pollNow} className="text-xs">
+              Poll now
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {batches.length === 0 ? (
+          <p className="text-[11px] text-zinc-400">No batches yet.</p>
+        ) : (
+          <div className="space-y-1">
+            {batches.map((b) => (
+              <div key={b.id} className="flex items-center justify-between gap-2 text-[11px] border-b border-zinc-100 py-1">
+                <div className="flex items-center gap-2">
+                  <Badge className={
+                    b.status === "completed"
+                      ? "bg-emerald-100 text-emerald-700"
+                      : b.status === "in_progress"
+                        ? "bg-blue-100 text-blue-700"
+                        : "bg-zinc-200 text-zinc-700"
+                  }>{b.status}</Badge>
+                  <span className="text-zinc-700">{b.request_count} requests</span>
+                  <span className="text-zinc-400">·</span>
+                  <span className="text-zinc-500">submitted {new Date(b.submitted_at).toLocaleString("en-GB")}</span>
+                  {b.completed_at && (
+                    <>
+                      <span className="text-zinc-400">·</span>
+                      <span className="text-zinc-500">{b.succeeded_count} ok / {b.errored_count} err</span>
+                    </>
+                  )}
+                </div>
+                <span className="text-zinc-400 font-mono text-[9px]">{b.anthropic_batch_id.slice(0, 24)}...</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

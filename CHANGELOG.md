@@ -4,6 +4,16 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### Bulk classify (Anthropic Batch API)
+
+- New cost-saver path: bulk reclassify legacy or stale rows via Anthropic's Messages Batches API at ~50% the per-token cost of synchronous calls. The hot-path `/api/classify-email` POST stays sync because it has to be sub-second; this is for backfill / housekeeping where a 5-30 minute turnaround is acceptable (24h SLA).
+- Migration `015_classify_batches.sql` tracks batches: `anthropic_batch_id`, `email_ids[]`, status (in_progress / completed / canceled / expired / errored), submitted_by, request_count, succeeded_count, errored_count.
+- New `src/lib/classify-prompt.ts` extracts CLASSIFIER_RULES + `buildBatchUserMessage` so sync and batch share the same prompt and don't drift apart over time.
+- New `src/lib/classify-batch.ts` wraps Anthropic's Batches API: `submitClassifyBatch(emails)` posts the batch with cached system prompt; `fetchBatchStatus(id)` polls; `processBatchResults(id, url)` downloads JSONL output, parses each line's classification, normalises tags + stage, and upserts `email_classifications`.
+- New `/api/classify-batch` route: `POST {email_ids[]}` submits, `GET ?id=N` polls a single batch, `GET ?all=open` polls every in-flight batch (used by the cron + a manual button). All authenticated.
+- New cron `/api/cron/poll-classify-batches` registered every 5 minutes in `vercel.json`. Iterates open batches, processes any that have ended, marks tracking rows complete with success/error counts. Secured by `CRON_SECRET`.
+- New `Bulk classify (Anthropic Batch API)` panel at the top of `/usage`: live count of stale rows (NULL ai_tags or NULL ai_conversation_stage), a `Reclassify N stale rows` button that batches up to 1000 ids in one submission, a `Poll now` button for impatient checks, and a list of recent batches with status, counts, and submitted_at.
+
 ### Bulk email actions
 
 - Multi-select on the email list. Hover any card to reveal a checkbox; click to toggle. Shift-click range-selects from the last toggled card to the clicked one (Outlook / Gmail behaviour). Selection clears automatically when you switch folder or filter, so a stale selection can't drive an unrelated bulk action.
