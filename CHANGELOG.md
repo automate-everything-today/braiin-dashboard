@@ -4,6 +4,13 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### AI learning governance
+
+- New `/settings/ai-learning` review page (manager + super_admin only) gives visibility and control over the writing-voice corpus that drives reply suggestions. Two sections: per-staff toggle table and a captured-samples browser.
+- **Per-staff overrides**: list every active staff member with their current `Capture` and `Share with team` toggles, both editable inline. A manager can disable cross-team sharing for a specific person (e.g. someone leaving, or a junior whose voice we don't want seeding the corpus yet) without waiting for that user to update their own profile. Toggles fire optimistically with rollback on API error.
+- **Sample browser**: paginated table of every captured reply with sender attribution (`Adrienne Solyom (Sales)`), date/time, the original email subject and recipient, the reply text (3-line clamp), and an "AI used" badge when the staff member sent the AI's suggestion verbatim. Filter by sender, date window (7 / 30 / 90 / 365 days), and subject search. Per-row delete removes the sample from the corpus so it stops being used as a pattern.
+- New endpoints: `GET/DELETE /api/ai-samples` and `GET/PATCH /api/staff-ai-prefs`. All gated to manager / super_admin. Validation via Zod for the PATCH payload so a malformed override can't write garbage to user_preferences.
+
 ### Cross-team writing-voice corpus
 
 - Classifier reply suggestions now learn from EVERY Corten staff member's recent replies (not just the current user's), so the AI's drafts match the organisation's house style as the team grows. Each sample is attributed by sender name + department in the prompt (e.g. `RE: Felixstowe quote - Adrienne Solyom (Sales) wrote: "..."`) so Claude can pattern-match by role.
