@@ -273,10 +273,21 @@ export async function POST(req: Request) {
     : null;
   const cachedHasStageSignal =
     !!(cachedStageRaw?.ai_conversation_stage || cachedStageRaw?.user_conversation_stage);
+  // Network-mismatch staleness: if the sender's domain belongs to a known
+  // freight network but the cached row says it's not a network email, the
+  // cached classification predates the freight_networks directory (or the
+  // sender was added to it later). Reclassify once so the next render
+  // shows the right category. After it runs, ai_category becomes 'network'
+  // and this check passes silently on every subsequent open.
+  const matchedNetworkForCache = cached
+    ? await findNetworkByEmail((cached as { from_email?: string | null }).from_email || from_email || "")
+    : null;
+  const cachedNetworkMismatch =
+    matchedNetworkForCache && cached && cached.ai_category !== "network" && !cached.user_override_category;
   const cachedIsEmpty =
     cached &&
     !cached.user_override_category &&
-    (!cached.ai_summary || !cachedHasTags || !cachedHasStageSignal);
+    (!cached.ai_summary || !cachedHasTags || !cachedHasStageSignal || cachedNetworkMismatch);
   if (cached && !cachedIsEmpty) {
     const cachedTags = cached as { ai_tags?: string[] | null; user_tags?: string[] | null; relevance_feedback?: string | null };
     const aiStage = isConversationStage(cachedStageRaw?.ai_conversation_stage) ? cachedStageRaw.ai_conversation_stage as ConversationStage : null;
