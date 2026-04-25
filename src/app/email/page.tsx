@@ -1138,8 +1138,26 @@ export default function EmailPage() {
         assignee = { name, initials: name.split(" ").filter(Boolean).map((n: string) => n[0]).join("").slice(0, 2).toUpperCase() };
       }
 
-      const participants = [...new Set(thread.emails.map(e => e.fromName || e.from.split("@")[0]))];
-      const title = thread.count > 1 ? participants.join(", ") : (email.fromName || email.from);
+      // Title shows the LATEST sender first so the card answers "who
+      // spoke last on this thread?" - the most actionable signal in a
+      // shared inbox. Older participants follow, capped to 2 visible
+      // names with "+N" for the rest.
+      const seen = new Set<string>();
+      const participants: string[] = [];
+      // thread.emails is chronological oldest-first; iterate latest-first.
+      for (let i = thread.emails.length - 1; i >= 0; i--) {
+        const e = thread.emails[i];
+        const name = e.fromName || e.from.split("@")[0];
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        participants.push(name);
+      }
+      const visible = participants.slice(0, 2);
+      const remaining = participants.length - visible.length;
+      const title =
+        thread.count === 1
+          ? (email.fromName || email.from)
+          : `${visible.join(", ")}${remaining > 0 ? ` +${remaining}` : ""}`;
 
       return {
         id: email.id, title, subtitle: email.subject, preview: email.preview,
