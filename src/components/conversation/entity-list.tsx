@@ -238,34 +238,36 @@ export function EntityList({
                           </div>
                         </div>
                       )}
-                      {item.badges?.map((badge, i) => {
-                        if (badge.variant === "mode-icon") {
-                          const cfg = MODE_ICON[badge.label];
-                          if (!cfg) return null;
-                          const { Icon, tone, title } = cfg;
-                          // Match the Badge component's h-5 so the icon
-                          // baselines line up with adjacent pills.
-                          return (
-                            <span
-                              key={i}
-                              title={title}
-                              className={`inline-flex items-center justify-center h-5 mt-0.5 ${tone}`}
-                            >
-                              <Icon size={14} />
-                            </span>
-                          );
-                        }
-                        if (badge.variant === "tag") {
-                          return (
-                            <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 mt-0.5 rounded-full bg-zinc-900 text-white text-[7px] font-semibold tracking-wide">
-                              <span className="w-1 h-1 rounded-full bg-white/60" />{badge.label}
-                            </span>
-                          );
-                        }
-                        return (
-                          <Badge key={i} variant="secondary" className={`text-[7px] mt-0.5 ${badge.color}`}>{badge.label}</Badge>
-                        );
-                      })}
+                      {item.badges && item.badges.length > 0 && (
+                        <div className="flex items-center justify-end gap-1 flex-wrap mt-0.5">
+                          {item.badges.map((badge, i) => {
+                            if (badge.variant === "mode-icon") {
+                              const cfg = MODE_ICON[badge.label];
+                              if (!cfg) return null;
+                              const { Icon, tone, title } = cfg;
+                              return (
+                                <span
+                                  key={i}
+                                  title={title}
+                                  className={`inline-flex items-center justify-center ${tone}`}
+                                >
+                                  <Icon size={14} />
+                                </span>
+                              );
+                            }
+                            if (badge.variant === "tag") {
+                              return (
+                                <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-zinc-900 text-white text-[7px] font-semibold tracking-wide">
+                                  <span className="w-1 h-1 rounded-full bg-white/60" />{badge.label}
+                                </span>
+                              );
+                            }
+                            return (
+                              <Badge key={i} variant="secondary" className={`text-[7px] ${badge.color}`}>{badge.label}</Badge>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </button>
