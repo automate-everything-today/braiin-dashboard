@@ -7,6 +7,7 @@ import { RelevanceTagChips } from "@/components/email/relevance-tags";
 import { ConversationStagePicker } from "@/components/email/conversation-stage-picker";
 import { CategoryPicker } from "@/components/email/category-picker";
 import { AILearningPanel } from "@/components/email/ai-learning-panel";
+import { HtmlIframe } from "@/components/email/html-iframe";
 import { isConversationStage, type ConversationStage } from "@/lib/conversation-stages";
 
 // Exported for testing
@@ -84,107 +85,6 @@ function OutgoingBubble({ msg }: { msg: ConversationMessage }) {
         ))}
         <p className="text-[9px] text-zinc-500 mt-1 text-right">{formatMessageTime(msg.timestamp)}</p>
       </div>
-    </div>
-  );
-}
-
-function HtmlIframe({ html, emailId }: { html: string; emailId?: string }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(200);
-  const [resolvedHtml, setResolvedHtml] = useState(html);
-  const [attachments, setAttachments] = useState<any[]>([]);
-
-  // Resolve cid: images via API on mount
-  useEffect(() => {
-    if (!emailId || !html.includes("cid:")) {
-      setResolvedHtml(html);
-      return;
-    }
-    fetch("/api/email-images", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messageId: emailId, body: html }),
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data.body) setResolvedHtml(data.body);
-        if (data.attachments) setAttachments(data.attachments);
-      })
-      .catch(() => setResolvedHtml(html));
-  }, [html, emailId]);
-
-  const onLoad = useCallback(() => {
-    const doc = iframeRef.current?.contentDocument;
-    if (doc) {
-      // Force every link to open in a new browser tab. Without this a click
-      // loads the destination INSIDE the iframe, wiping the email. We also
-      // belt-and-braces mark individual anchors because some HTML emails
-      // render links as JS onclick handlers or pseudo-buttons.
-      if (!doc.head.querySelector('base[target="_blank"]')) {
-        const base = doc.createElement("base");
-        base.setAttribute("target", "_blank");
-        doc.head.insertBefore(base, doc.head.firstChild);
-      }
-      doc.querySelectorAll("a[href]").forEach((a) => {
-        a.setAttribute("target", "_blank");
-        a.setAttribute("rel", "noopener noreferrer");
-      });
-
-      const style = doc.createElement("style");
-      style.textContent = "body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 13px; color: #3f3f46; margin: 0; padding: 0; overflow-x: hidden; } img { max-width: 100%; height: auto; } table { max-width: 100%; } a { color: #2563eb; }";
-      doc.head.appendChild(style);
-      const h = doc.body.scrollHeight;
-      if (h > 0) setHeight(Math.min(h + 16, 1200));
-    }
-  }, []);
-
-  function openInBrowser() {
-    // Blob URL renders the full HTML in its own tab at full height, with
-    // working links, as though opened in a standalone webmail window. Tab
-    // keeps the blob URL until closed; browsers revoke it on tab close.
-    const blob = new Blob([resolvedHtml], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    window.open(url, "_blank", "noopener,noreferrer");
-    // Free the URL after a delay so the new tab has time to load it.
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  }
-
-  return (
-    <div>
-      <div className="flex justify-end mb-1">
-        <button
-          onClick={openInBrowser}
-          className="text-[9px] text-zinc-400 hover:text-zinc-600 underline"
-          title="Open this HTML email in a new browser tab"
-        >
-          Open in browser
-        </button>
-      </div>
-      <iframe
-        ref={iframeRef}
-        srcDoc={resolvedHtml}
-        onLoad={onLoad}
-        // allow-popups lets target="_blank" actually open a new tab; without
-        // it the browser silently swallows the click. allow-popups-to-escape
-        // -sandbox keeps the opened page unsandboxed so external sites work.
-        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-        className="w-full border-0 rounded-lg bg-white"
-        style={{ height: `${height}px` }}
-      />
-      {attachments.length > 0 && (
-        <div className="mt-2 space-y-1">
-          {attachments.map((att: any, i: number) => (
-            <a key={i}
-              href={`/api/email-images?messageId=${emailId}&attachmentId=${att.id}`}
-              target="_blank" rel="noopener noreferrer"
-              className="flex items-center gap-2 px-2 py-1.5 bg-zinc-50 rounded border text-[10px] hover:bg-zinc-100">
-              <span>📎</span>
-              <span className="flex-1 truncate text-zinc-600">{att.name}</span>
-              <span className="text-zinc-400 shrink-0">{att.size ? `${Math.round(att.size / 1024)}KB` : ""}</span>
-            </a>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

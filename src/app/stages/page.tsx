@@ -1,13 +1,27 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  KeyboardSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 import { PageGuard } from "@/components/page-guard";
+import { ThreadDrawer } from "@/components/stages/thread-drawer";
+import { toast } from "sonner";
 import {
   CONVERSATION_STAGES,
   STAGE_LABEL,
   STAGE_STYLE,
   STAGE_DESCRIPTION,
+  isConversationStage,
   type ConversationStage,
 } from "@/lib/conversation-stages";
 
@@ -63,6 +77,17 @@ function StagesInner() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [onlyStale, setOnlyStale] = useState(false);
+  const [drawerEmailId, setDrawerEmailId] = useState<string | null>(null);
+  const [activeDragCard, setActiveDragCard] = useState<StageCard | null>(null);
+
+  // PointerSensor with an 8px activation distance: short clicks still fire
+  // the card's onClick (open drawer) but a real drag intent (movement >= 8px)
+  // initiates dnd. KeyboardSensor adds Space/Enter to lift, arrows to move
+  // for accessibility.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor),
+  );
 
   async function load() {
     try {
@@ -108,6 +133,81 @@ function StagesInner() {
     return { total, stale };
   }, [filtered]);
 
+  function handleDragStart(event: DragStartEvent) {
+    const id = String(event.active.id);
+    const card = (columns || [])
+      .flatMap((c) => c.cards)
+      .find((c) => c.email_id === id);
+    setActiveDragCard(card || null);
+  }
+
+  async function handleDragEnd(event: DragEndEvent) {
+    setActiveDragCard(null);
+    const { active, over } = event;
+    if (!over || !columns) return;
+    const cardId = String(active.id);
+    const targetStage = String(over.id);
+    if (!isConversationStage(targetStage)) return;
+
+    // Find the card and its current stage. No-op if dropped back on same column.
+    let sourceStage: ConversationStage | null = null;
+    let movedCard: StageCard | null = null;
+    for (const col of columns) {
+      const found = col.cards.find((c) => c.email_id === cardId);
+      if (found) {
+        sourceStage = col.stage;
+        movedCard = found;
+        break;
+      }
+    }
+    if (!movedCard || !sourceStage || sourceStage === targetStage) return;
+
+    // Optimistic move. On error we restore the previous state and toast.
+    const previousColumns = columns;
+    setColumns((prev) => {
+      if (!prev) return prev;
+      return prev.map((col) => {
+        if (col.stage === sourceStage) {
+          return {
+            ...col,
+            cards: col.cards.filter((c) => c.email_id !== cardId),
+            count: Math.max(0, col.count - 1),
+          };
+        }
+        if (col.stage === targetStage) {
+          const nextCard: StageCard = {
+            ...movedCard!,
+            stage: targetStage,
+            stage_source: "user",
+            days_in_stage: 0,
+          };
+          return {
+            ...col,
+            cards: [nextCard, ...col.cards],
+            count: col.count + 1,
+          };
+        }
+        return col;
+      });
+    });
+
+    try {
+      const res = await fetch("/api/classify-email", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email_id: cardId, user_conversation_stage: targetStage }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Update failed (${res.status})`);
+      }
+      toast.success(`Moved to ${STAGE_LABEL[targetStage as ConversationStage]}`);
+    } catch (err) {
+      setColumns(previousColumns);
+      toast.error(err instanceof Error ? err.message : "Could not move card");
+    }
+  }
+
   if (columns === null) return <p className="text-zinc-400 py-12">Loading pipeline...</p>;
 
   return (
@@ -144,16 +244,48 @@ function StagesInner() {
         </div>
       )}
 
-      <div className="flex gap-3 overflow-x-auto pb-4">
-        {(filtered || []).map((col) => (
-          <StageColumnView key={col.stage} column={col} />
-        ))}
-      </div>
+      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <div className="flex gap-3 overflow-x-auto pb-4">
+          {(filtered || []).map((col) => (
+            <StageColumnView
+              key={col.stage}
+              column={col}
+              onCardClick={(id) => setDrawerEmailId(id)}
+            />
+          ))}
+        </div>
+        <DragOverlay>
+          {activeDragCard && <DragPreviewCard card={activeDragCard} />}
+        </DragOverlay>
+      </DndContext>
+
+      {drawerEmailId && (
+        <ThreadDrawer
+          emailId={drawerEmailId}
+          onClose={() => setDrawerEmailId(null)}
+          onStageChanged={() => {
+            // Stage changed inside the drawer - reload the kanban so
+            // the moved card appears in its new column. We keep the
+            // drawer open so the user can confirm the move and act
+            // on the next thread.
+            load();
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function StageColumnView({ column }: { column: StageColumn }) {
+function StageColumnView({
+  column,
+  onCardClick,
+}: {
+  column: StageColumn;
+  onCardClick: (emailId: string) => void;
+}) {
+  // Each column is a drop target keyed by its stage id. The droppable
+  // wrapper lights up on hover during drag.
+  const { isOver, setNodeRef } = useDroppable({ id: column.stage });
   return (
     <div className="w-72 shrink-0 flex flex-col">
       <div className={`px-2.5 py-1.5 rounded-t-lg border border-b-0 ${STAGE_STYLE[column.stage]} flex items-center justify-between`}>
@@ -165,12 +297,17 @@ function StageColumnView({ column }: { column: StageColumn }) {
           {column.count}
         </span>
       </div>
-      <div className="flex-1 min-h-[60px] bg-zinc-50 border border-zinc-200 rounded-b-lg p-1.5 space-y-1.5">
+      <div
+        ref={setNodeRef}
+        className={`flex-1 min-h-[60px] border rounded-b-lg p-1.5 space-y-1.5 transition-colors ${
+          isOver ? "bg-blue-50 border-blue-300" : "bg-zinc-50 border-zinc-200"
+        }`}
+      >
         {column.cards.length === 0 ? (
           <p className="text-[10px] text-zinc-400 text-center py-4">No threads</p>
         ) : (
           column.cards.map((card) => (
-            <StageCardView key={card.email_id} card={card} />
+            <StageCardView key={card.email_id} card={card} onClick={onCardClick} />
           ))
         )}
       </div>
@@ -178,7 +315,13 @@ function StageColumnView({ column }: { column: StageColumn }) {
   );
 }
 
-function StageCardView({ card }: { card: StageCard }) {
+function StageCardView({
+  card,
+  onClick,
+}: {
+  card: StageCard;
+  onClick: (emailId: string) => void;
+}) {
   const threshold = STALE_DAYS[card.stage];
   const isStale = card.days_in_stage >= threshold;
   const ageLabel = card.days_in_stage === 0
@@ -187,13 +330,61 @@ function StageCardView({ card }: { card: StageCard }) {
       ? "1 day"
       : `${card.days_in_stage} days`;
 
+  // Draggable hooks return listeners that hijack pointer events; the
+  // PointerSensor's 8px activation means small movements (a click) still
+  // bubble through to onClick. While the card is being dragged we hide
+  // the source (DragOverlay shows the floating preview instead) so the
+  // kanban doesn't show a duplicate ghost.
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: card.email_id });
+
   return (
-    <Link
-      href={`/email?id=${encodeURIComponent(card.email_id)}`}
-      className={`block bg-white border rounded-md p-2 hover:shadow-sm transition-shadow ${
+    <button
+      ref={setNodeRef}
+      type="button"
+      onClick={() => onClick(card.email_id)}
+      {...attributes}
+      {...listeners}
+      className={`w-full text-left bg-white border rounded-md p-2 hover:shadow-md hover:border-zinc-300 cursor-pointer transition-all ${
         isStale ? "border-red-300" : "border-zinc-200"
+      } ${isDragging ? "opacity-30" : ""}`}
+    >
+      <CardInner card={card} ageLabel={ageLabel} isStale={isStale} />
+    </button>
+  );
+}
+
+// Floating preview shown while a card is being dragged. Same layout as
+// the static card so the user sees what they're moving without UI shift.
+function DragPreviewCard({ card }: { card: StageCard }) {
+  const threshold = STALE_DAYS[card.stage];
+  const isStale = card.days_in_stage >= threshold;
+  const ageLabel = card.days_in_stage === 0
+    ? "today"
+    : card.days_in_stage === 1
+      ? "1 day"
+      : `${card.days_in_stage} days`;
+  return (
+    <div
+      className={`w-72 bg-white border rounded-md p-2 shadow-xl rotate-1 ${
+        isStale ? "border-red-300" : "border-zinc-300"
       }`}
     >
+      <CardInner card={card} ageLabel={ageLabel} isStale={isStale} />
+    </div>
+  );
+}
+
+function CardInner({
+  card,
+  ageLabel,
+  isStale,
+}: {
+  card: StageCard;
+  ageLabel: string;
+  isStale: boolean;
+}) {
+  return (
+    <>
       <div className="flex items-start justify-between gap-2 mb-1">
         <p className="text-[11px] font-medium text-zinc-800 line-clamp-2 flex-1">
           {card.subject || "(no subject)"}
@@ -220,6 +411,6 @@ function StageCardView({ card }: { card: StageCard }) {
           {ageLabel}
         </span>
       </div>
-    </Link>
+    </>
   );
 }

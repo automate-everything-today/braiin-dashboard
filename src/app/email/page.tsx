@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useMemo, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { isInternalEmail } from "@/config/customer";
 import { CATEGORY_CONFIG } from "@/types/email";
@@ -96,6 +97,7 @@ function computeReplyAllCc(
 
 export default function EmailPage() {
   const { session } = useSession();
+  const searchParams = useSearchParams();
   const userEmail = session?.email || "";
 
   // Inbox state
@@ -285,6 +287,64 @@ export default function EmailPage() {
     }, 60000);
     return () => clearInterval(interval);
   }, [folder, selectedInboxId, searching]);
+
+  // Deep-link from /stages (and anywhere else linking with `?id=...`):
+  // when the email page mounts with an `id` query param, select that
+  // thread regardless of which inbox / folder / date window the user is
+  // currently viewing. If the email is already in the loaded list we
+  // pick it from there; otherwise we fetch it from Graph by id and
+  // splice it in so the conversation panel + classify hooks find it.
+  // Only acts on each distinct id once so unrelated re-renders don't
+  // keep re-selecting.
+  const deepLinkId = searchParams.get("id");
+  const handledDeepLinkRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!deepLinkId) return;
+    if (handledDeepLinkRef.current === deepLinkId) return;
+    // Don't try to resolve until the initial inbox load has settled. On
+    // first paint emails is empty and loading is true; we want at least
+    // one of those to flip before we decide a deep-linked id is "missing".
+    if (loading) return;
+    handledDeepLinkRef.current = deepLinkId;
+
+    const match = emails.find((e) => e.id === deepLinkId);
+    if (match) {
+      setSelected(match);
+      return;
+    }
+    // Not in the current view - fetch the message directly from Graph.
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/email-by-id?id=${encodeURIComponent(deepLinkId)}&email=${encodeURIComponent(userEmail)}`);
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          if (cancelled) return;
+          toast.error(body.error || "Could not load email", {
+            description: "It may have been deleted, moved to another mailbox, or you may not have access.",
+          });
+          return;
+        }
+        const data = await res.json();
+        const fetched = data.email as Email | undefined;
+        if (cancelled || !fetched) return;
+        // Splice the fetched email into the local list so the existing
+        // conversation panel + classify pipeline can resolve it by id
+        // without any additional plumbing. De-dupe defensively.
+        setEmails((prev) => (prev.some((e) => e.id === fetched.id) ? prev : [fetched, ...prev]));
+        setSelected(fetched);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("[email] deep-link fetch failed:", err);
+        toast.error("Could not load email", {
+          description: err instanceof Error ? err.message : "Unknown error.",
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [deepLinkId, loading, emails, userEmail]);
 
   // Save/restore drafts when switching emails
   useEffect(() => {
