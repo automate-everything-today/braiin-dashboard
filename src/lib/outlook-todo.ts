@@ -153,6 +153,33 @@ export async function updateOutlookTask(params: {
   return true;
 }
 
+/**
+ * List tasks in a user's default ToDo list modified since `sinceIso`.
+ * Used by the cron pull-side to reconcile remote changes back into Braiin.
+ * Returns [] when sync is disabled or the call fails - caller treats
+ * "no remote changes" the same as "sync not running".
+ */
+export async function listTasksSince(params: {
+  userEmail: string;
+  listId: string;
+  sinceIso: string;
+}): Promise<OutlookTask[]> {
+  if (!OUTLOOK_TASKS_SYNC_ENABLED) return [];
+  const token = await getAppToken();
+  if (!token) return [];
+  const filter = encodeURIComponent(`lastModifiedDateTime gt ${params.sinceIso}`);
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(params.userEmail)}/todo/lists/${params.listId}/tasks?$filter=${filter}&$top=100`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!res.ok) {
+    console.warn("[outlook-todo] listTasksSince failed:", res.status, await res.text());
+    return [];
+  }
+  const data = await res.json();
+  return (data.value as OutlookTask[]) || [];
+}
+
 export async function deleteOutlookTask(params: {
   userEmail: string;
   listId: string;

@@ -1369,6 +1369,43 @@ export default function EmailPage() {
         },
         category: cls.category,
         isManager: !!session?.is_manager,
+        onCreateTask: async () => {
+          // Build a sensible task from the email + AI classification.
+          // Title = the AI's suggested action when available, else the
+          // subject. Description carries the summary so the assignee gets
+          // context without re-reading the email. source_url deep-links
+          // back to the email by id.
+          const titleFromAction = (cls.suggested_action || "").trim();
+          const title = titleFromAction && titleFromAction !== "No action needed"
+            ? titleFromAction
+            : selected.subject || "Follow up";
+          const descParts: string[] = [];
+          if (cls.summary) descParts.push(cls.summary);
+          if (selected.fromName || selected.from) {
+            descParts.push(`From: ${selected.fromName || selected.from}`);
+          }
+          const priority = cls.priority === "urgent" || cls.priority === "high"
+            ? cls.priority
+            : "medium";
+          try {
+            const res = await fetch("/api/tasks", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                title: title.slice(0, 500),
+                description: descParts.join("\n\n").slice(0, 5000),
+                priority,
+                source_type: "email",
+                source_id: selected.id,
+                source_url: `/email?id=${encodeURIComponent(selected.id)}`,
+              }),
+            });
+            if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+            toast.success("Task created");
+          } catch (e: unknown) {
+            toast.error(`Failed to create task: ${e instanceof Error ? e.message : "unknown error"}`);
+          }
+        },
         onCategoryChange: async (next: string) => {
           const prev = cls.category;
           setClassifications((prevState: Record<string, any>) => ({

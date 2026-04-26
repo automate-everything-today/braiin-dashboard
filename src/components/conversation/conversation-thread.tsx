@@ -541,16 +541,26 @@ function AiBubble({ msg }: { msg: ConversationMessage }) {
             <MissingInfoChecklist items={msg.missingInfo} onDraft={msg.onMissingInfoDraft} />
           )}
           {/* Action buttons */}
-          {msg.actions && msg.actions.length > 0 && (
+          {(msg.actions && msg.actions.length > 0) || msg.onCreateTask ? (
             <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-zinc-200">
-              {msg.actions.map((action, i) => (
+              {(msg.actions || []).map((action, i) => (
                 <button key={i} onClick={() => action.onClick?.()}
                   className="px-2.5 py-1 bg-white border border-zinc-200 rounded-lg text-[10px] text-zinc-700 hover:bg-zinc-100 transition-colors flex items-center gap-1">
                   {action.label}
                 </button>
               ))}
+              {msg.onCreateTask && (
+                <button
+                  onClick={() => msg.onCreateTask?.()}
+                  className="px-2.5 py-1 bg-white border border-zinc-200 rounded-lg text-[10px] text-zinc-700 hover:bg-zinc-100 transition-colors flex items-center gap-1"
+                  title="Create a task linked to this email"
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                  Mark as task
+                </button>
+              )}
             </div>
-          )}
+          ) : null}
           {msg.isManager && <AILearningPanel />}
           <p className="text-[9px] text-zinc-400 mt-1 text-right">{formatMessageTime(msg.timestamp)}</p>
         </div>

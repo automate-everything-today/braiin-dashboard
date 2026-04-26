@@ -63,6 +63,10 @@ export interface ConversationMessage {
   // learning from?" panel below the suggestions. Set from the email
   // page's session.is_manager.
   isManager?: boolean;
+  // Quick "Mark as task" affordance on the AI bubble. Caller wires this
+  // to POST /api/tasks with source_type=email so the task back-links to
+  // the email it came from.
+  onCreateTask?: () => Promise<void> | void;
 }
 
 export interface Channel {
