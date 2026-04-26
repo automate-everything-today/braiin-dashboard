@@ -22,7 +22,7 @@ Confirmed 2026-04-27 after parallel agent review.
 | # | Decision | Rationale |
 |---|---|---|
 | 1 | **Polymorphic linking** via `subject_type TEXT, subject_id TEXT` with no RDBMS FK. Application-layer integrity. Per-subject-type partial indexes for hot reads. Nightly orphan audit view. | The alternative (per-module join tables) forces every new module to ship a join migration and breaks the "modules independent" story. |
-| 2 | **Partition `activity.events` by month from day one**, 24-month retention via `DROP PARTITION` on month 25. | Postgres has no `ALTER TABLE ... PARTITION BY`. Retrofitting at 18M rows requires multi-week online migration. Day-one partitioning is the only viable path. |
+| 2 | **Partition `activity.events` by `occurred_at` (month range) from day one**, 24-month retention via `DROP PARTITION` on month 25. Bootstrap covers 12 months back through 24 months forward (36 partitions) so backfill from Cargowise sync (028) lands cleanly in historical buckets. | Postgres has no `ALTER TABLE ... PARTITION BY`. Retrofitting at 18M rows requires multi-week online migration. Day-one partitioning is the only viable path. Partitioning by `occurred_at` (when the event happened) instead of `created_at` (when the row was inserted) means timeline reads ordered by `occurred_at DESC` get partition pruning automatically. |
 | 3 | **Design with the margin-loop end state in mind**. Schema must support reconciling predicted-margin-at-quote against realised-margin-post-delivery, with attribution (which event/cost line caused the leak). Build the loop in Phase 5. | This is the moat. Wisor / Catapult / Cargocosting see rates only. Loop / Project44 see shipments only. Cargowise sees both but with bad UX. Braiin closing the loop is what makes a commercial director sign. |
 | 4 | **Three-layer correlation ID** for inbound stitching: Reply-To token (`inbound+<token>@inbound.braiin.app`) + subject-line tag + Message-ID / In-Reply-To. | Reply-To is most reliable (carriers can't strip envelope). Subject tag is human-readable. Message-ID catches conventional replies. All three together approach 100% inbound capture. |
 
@@ -491,6 +491,17 @@ Service-role only at this point; role-gated at the API layer per `core.staff_org
 - **Mass negotiate approval**. Does mass counter-offer require manager approval per tenant policy? (Phase 6)
 - **Orphan resolution UI**. When inbound matches no token, how does a rep find and assign? (Phase 1.5)
 - **Document mismatch detection**. Auto-diff between BL / CI / PL — own model or rule-based? (deferred)
+- **DB-layer visibility enforcement**. Today the `events.visibility` column is enforced at the API layer only. Service-role-key callers bypass RLS, so a misconfigured endpoint that omits the visibility filter could leak `directors_plus` events to a rep. Two paths to fix: (a) a wrapper SQL function `activity.read_events(...)` that the API MUST call (filters by role internally), or (b) introduce role-specific Postgres roles (`app_rep`, `app_manager`, `app_director`) and policy-based visibility. Both require a one-off auth-layer change; deferred to Phase 1.5 as a defence-in-depth follow-up. Until then, every API endpoint touching `activity.events` MUST include the visibility filter; a code-review checklist enforces this.
+
+## 9.1 Security enforcement summary
+
+| Control | Where enforced | Why this layer |
+|---|---|---|
+| Tenant isolation | `org_id` column + service-role-only access + per-index `(org_id, ...)` lead | Prevents cross-tenant scans at the planner level; RLS is defence in depth via REVOKE all from anon/authenticated |
+| Annotation immutability | DB-layer trigger (`activity.prevent_annotation_mutation`) on UPDATE/DELETE | Forensic chain-of-custody must survive application bugs and admin mistakes |
+| Correlation token entropy | SDK boundary - reject any token format with less than 128 bits of randomness | Tokens leave the trust boundary in outbound emails; targeted guessing is the threat model |
+| Email header length cap | DB CHECK constraint on `email_message_id` and `email_in_reply_to` (998 chars per RFC 5322) | Prevents storage amplification from crafted MIME |
+| Visibility (margin / restricted notes) | API-layer filter today; DB-layer wrapper deferred (item above) | Trade-off: shipping speed vs defence-in-depth. Logged as Phase 1.5 follow-up. |
 
 ## 10. Migration sequencing
 
