@@ -1,5 +1,12 @@
-import { supabase } from "@/services/base";
+import { supabase as typedSupabase } from "@/services/base";
 import { OUTLOOK_TASKS_SYNC_ENABLED, listTasksSince } from "@/lib/outlook-todo";
+
+// The generated Database type doesn't yet know about migration 017's
+// outlook_task_id / last_synced_at / sync_status columns. Cast at the
+// top of this file so the cron stays readable rather than peppered with
+// unknown casts.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const supabase = typedSupabase as any;
 
 /**
  * Pull-side reconciliation. Every 15 min, ask Graph "what tasks have
