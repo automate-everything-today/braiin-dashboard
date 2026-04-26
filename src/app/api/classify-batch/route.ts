@@ -27,9 +27,29 @@ import {
 
 const MAX_BATCH = 1000;
 
+async function isManager(email: string): Promise<boolean> {
+  const { data } = await supabase
+    .from("staff")
+    .select("is_manager")
+    .eq("email", email.toLowerCase())
+    .maybeSingle();
+  return Boolean((data as { is_manager?: boolean } | null)?.is_manager);
+}
+
+async function requireManagerOrAdmin(
+  session: { email: string; role: string } | null,
+): Promise<Response | null> {
+  if (!session?.email) return apiError("Not authenticated", 401);
+  if (session.role !== "super_admin" && !(await isManager(session.email))) {
+    return apiError("Forbidden", 403);
+  }
+  return null;
+}
+
 export async function POST(req: Request) {
   const session = await getSession();
-  if (!session?.email) return apiError("Not authenticated", 401);
+  const denied = await requireManagerOrAdmin(session);
+  if (denied) return denied;
 
   const body = await req.json().catch(() => null);
   const ids = Array.isArray(body?.email_ids) ? (body.email_ids as unknown[]) : [];
@@ -79,7 +99,7 @@ export async function POST(req: Request) {
       anthropic_batch_id: submitted.batch_id,
       email_ids: submittedEmailIds,
       status: "in_progress",
-      submitted_by: session.email,
+      submitted_by: session!.email,
       request_count: submitted.request_count,
     } as never)
     .select()
@@ -101,7 +121,8 @@ export async function POST(req: Request) {
 
 export async function GET(req: Request) {
   const session = await getSession();
-  if (!session?.email) return apiError("Not authenticated", 401);
+  const denied = await requireManagerOrAdmin(session);
+  if (denied) return denied;
 
   const url = new URL(req.url);
   const idParam = url.searchParams.get("id");

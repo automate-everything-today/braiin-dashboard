@@ -4,6 +4,12 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### Security hardening (audit follow-up)
+
+- **`/api/classify-batch` now requires manager or super_admin.** The endpoint submits bulk email reclassification jobs to Anthropic - any signed-in viewer was previously able to call it and trigger unbounded API spend against email IDs they did not own. POST and GET are both gated; non-managers receive 403. Tracking rows still record `submitted_by` for audit. `(src/app/api/classify-batch/route.ts)`
+- **Tasks table locked to service-role access.** Migration `018_tasks_rls.sql` enables RLS on `tasks`, drops any legacy "Allow all" policies, and revokes table + sequence grants from `anon` and `authenticated`. The `/api/tasks` REST layer (which runs under the server-side service-role key) remains the sole read/write path; the application-level visibility rules already enforced there now have a defence-in-depth layer beneath them. Closes the gap that migration 017 left open.
+- **Browser-side direct task insert removed.** `src/hooks/use-email-actions.ts` (the email-pin follow-up flow) now POSTs to `/api/tasks` instead of calling `supabase.from("tasks").insert(...)` from the client. Required because the new RLS policy denies anon writes; also brings the email-pin task creation through the same Zod validation + visibility scope as every other task entry.
+
 ### Tasks API + Outlook ToDo sync
 
 - New `/api/tasks` REST layer (GET / POST / PATCH / DELETE) replaces the direct Supabase calls the `/tasks` page was making. Enforces visibility rules: regular staff see tasks assigned to or created by them; managers can pass `?scope=team` to see their department's; super_admin sees everything. Zod-validated payloads.

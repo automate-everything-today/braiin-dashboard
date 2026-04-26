@@ -132,22 +132,29 @@ export function useEmailActions(params: EmailActionsParams) {
         return;
       }
 
-      // Also create a follow-up task, as before
-      supabase.from("tasks").insert({
-        title: `Follow up: ${selected.subject}`,
-        description: `From: ${selected.fromName || selected.from}\n${selected.preview}`,
-        account_code: selected.matchedAccount || "",
-        assigned_to: "",
-        due_date: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
-        priority: "medium",
-        status: "open",
-        auto_generated: true,
-        source: "email_pin",
-      }).then(({ error: taskErr }) => {
-        if (taskErr) {
-          console.error("[email] Failed to create follow-up task:", taskErr.message);
+      // Also create a follow-up task via the API (RLS locks tasks to the
+      // service role, so direct browser inserts are no longer permitted).
+      fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `Follow up: ${selected.subject}`,
+          description: `From: ${selected.fromName || selected.from}\n${selected.preview}`,
+          account_code: selected.matchedAccount || null,
+          due_date: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+          priority: "medium",
+          source_type: "email",
+          source_id: selected.id,
+        }),
+      }).then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          console.error("[email] Failed to create follow-up task:", body);
           toast.error("Pinned, but follow-up task failed");
         }
+      }).catch((err) => {
+        console.error("[email] Failed to create follow-up task:", err);
+        toast.error("Pinned, but follow-up task failed");
       });
       toast.success("Pinned - task created for follow-up");
     }
