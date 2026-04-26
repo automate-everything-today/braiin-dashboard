@@ -13,6 +13,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
+import { Plane, Ship, Truck, Warehouse } from "lucide-react";
 import { PageGuard } from "@/components/page-guard";
 import { ThreadDrawer } from "@/components/stages/thread-drawer";
 import { toast } from "sonner";
@@ -24,6 +25,17 @@ import {
   isConversationStage,
   type ConversationStage,
 } from "@/lib/conversation-stages";
+import { isDepartmentTag } from "@/lib/relevance-tags";
+
+// Same palette used on email cards + the conversation thread, so a blue
+// plane always means Air across the app.
+const MODE_ICON: Record<string, { Icon: React.ComponentType<{ size?: number; className?: string }>; tone: string }> = {
+  Air: { Icon: Plane, tone: "text-blue-600" },
+  Sea: { Icon: Ship, tone: "text-green-600" },
+  Road: { Icon: Truck, tone: "text-red-600" },
+  Warehousing: { Icon: Warehouse, tone: "text-orange-600" },
+};
+const DEPT_PILL = "px-1.5 py-0.5 rounded-full border bg-blue-50 text-blue-700 border-blue-200 text-[9px]";
 
 type StageCard = {
   email_id: string;
@@ -401,11 +413,33 @@ function CardInner({
       )}
       <div className="flex items-center justify-between mt-1.5">
         <div className="flex items-center gap-1 flex-wrap">
-          {card.tags.slice(0, 3).map((tag) => (
-            <span key={tag} className="text-[9px] px-1 rounded bg-zinc-100 text-zinc-600">
-              {tag}
-            </span>
-          ))}
+          {card.tags.slice(0, 4).map((tag) => {
+            const mode = MODE_ICON[tag];
+            if (mode) {
+              const { Icon, tone } = mode;
+              return (
+                <span
+                  key={tag}
+                  title={tag}
+                  className={`inline-flex items-center justify-center ${tone}`}
+                >
+                  <Icon size={12} />
+                </span>
+              );
+            }
+            if (isDepartmentTag(tag)) {
+              return (
+                <span key={tag} className={DEPT_PILL}>
+                  {tag}
+                </span>
+              );
+            }
+            return (
+              <span key={tag} className="text-[9px] px-1 rounded bg-zinc-100 text-zinc-600">
+                {tag}
+              </span>
+            );
+          })}
         </div>
         <span className={`text-[9px] ${isStale ? "text-red-600 font-medium" : "text-zinc-400"}`}>
           {ageLabel}
