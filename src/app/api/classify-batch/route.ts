@@ -1,10 +1,13 @@
 import { supabase } from "@/services/base";
 import { getSession } from "@/lib/session";
 import { apiError, apiResponse } from "@/lib/validation";
+import { checkRateLimit } from "@/lib/rate-limit";
 import {
   submitClassifyBatch,
   fetchBatchStatus,
   processBatchResults,
+  determineFinalStatus,
+  type ClassifyBatchFinalStatus,
 } from "@/lib/classify-batch";
 
 /**
@@ -27,6 +30,22 @@ import {
 
 const MAX_BATCH = 1000;
 
+/**
+ * The classify_batches table's `notes` column stores raw exception
+ * messages from processBatchResults failures (Anthropic response bodies,
+ * network errors, parser errors). Surfacing those verbatim to a manager
+ * UI would leak internal detail and contradicts the "generic 500" rule
+ * the rest of this route now follows. Project to a sanitised summary.
+ */
+function sanitiseBatchRow(row: Record<string, unknown>): Record<string, unknown> {
+  if (!row) return row;
+  const { notes, ...safe } = row;
+  if (notes != null && String(notes).length > 0) {
+    return { ...safe, has_processing_error: true };
+  }
+  return safe;
+}
+
 async function isManager(email: string): Promise<boolean> {
   const { data } = await supabase
     .from("staff")
@@ -46,10 +65,54 @@ async function requireManagerOrAdmin(
   return null;
 }
 
+// Anthropic spend caps. Manager gating limits WHO; these limit how
+// expensive a compromised manager session can get before we notice.
+const MAX_SUBMITS_PER_MIN = 3;
+const MAX_DAILY_REQUESTS_PER_USER = 25_000;
+
 export async function POST(req: Request) {
   const session = await getSession();
   const denied = await requireManagerOrAdmin(session);
   if (denied) return denied;
+
+  const submitter = session!.email.toLowerCase();
+
+  // Per-minute cap. 3 × MAX_BATCH = 3,000 Anthropic charges/min worst
+  // case. Submissions are bursty (typically once per backfill job), so
+  // a small per-minute cap matches the legitimate usage pattern.
+  if (!(await checkRateLimit(`classify-batch-submit:${submitter}`, MAX_SUBMITS_PER_MIN))) {
+    return apiError("Too many submissions. Please wait a moment.", 429);
+  }
+
+  // 24h request-volume quota across all batches submitted by this user.
+  // Caps the daily blast radius of a compromised manager credential at
+  // ~25k Anthropic batch requests, well above any legitimate backfill
+  // pattern (typical: one or two thousand per onboarding).
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: dailyRows, error: dailyErr } = await supabase
+    .from("classify_batches")
+    .select("request_count")
+    .eq("submitted_by", submitter)
+    .gte("submitted_at", since);
+  if (dailyErr) {
+    console.error("[classify-batch] daily quota lookup failed:", dailyErr.message);
+    // Fail closed on the quota check - we'd rather block a legitimate
+    // submission than miss an attack.
+    return apiError("Could not verify daily quota. Please retry.", 503);
+  }
+  const usedToday = (dailyRows ?? []).reduce(
+    (acc, r) => acc + (Number((r as { request_count?: number | null }).request_count) || 0),
+    0,
+  );
+  if (usedToday >= MAX_DAILY_REQUESTS_PER_USER) {
+    console.warn(
+      `[classify-batch] daily quota exceeded for ${submitter}: ${usedToday}/${MAX_DAILY_REQUESTS_PER_USER}`,
+    );
+    return apiError(
+      "Daily classify-batch quota reached. Try again tomorrow or contact an admin.",
+      429,
+    );
+  }
 
   const body = await req.json().catch(() => null);
   const ids = Array.isArray(body?.email_ids) ? (body.email_ids as unknown[]) : [];
@@ -57,6 +120,17 @@ export async function POST(req: Request) {
     .filter((s): s is string => typeof s === "string" && s.length > 0)
     .slice(0, MAX_BATCH);
   if (cleanIds.length === 0) return apiError("email_ids required", 400);
+
+  // Reject if THIS submission would push the user over the daily quota.
+  // The earlier check rejects when already-over; this catches "one big
+  // submission tips us over" so we don't burn the cap on a single call.
+  if (usedToday + cleanIds.length > MAX_DAILY_REQUESTS_PER_USER) {
+    const remaining = Math.max(0, MAX_DAILY_REQUESTS_PER_USER - usedToday);
+    return apiError(
+      `This submission (${cleanIds.length}) would exceed today's quota. ${remaining} requests remaining.`,
+      429,
+    );
+  }
 
   // Pull existing rows for context. Batch path doesn't have access to the
   // raw inbox feed, so we rely on email_classifications already having
@@ -101,7 +175,7 @@ export async function POST(req: Request) {
       status: "in_progress",
       submitted_by: session!.email,
       request_count: submitted.request_count,
-    } as never)
+    })
     .select()
     .single();
   if (insertErr) {
@@ -123,6 +197,13 @@ export async function GET(req: Request) {
   const session = await getSession();
   const denied = await requireManagerOrAdmin(session);
   if (denied) return denied;
+
+  // 60/min/user. Manual polling from the dashboard plus the page-load
+  // batch list both use this; 60 is comfortably above any realistic UI
+  // pattern and still bounds how fast a single user can hit Anthropic.
+  if (!(await checkRateLimit(`classify-batch-read:${session!.email.toLowerCase()}`, 60))) {
+    return apiError("Too many requests. Please slow down.", 429);
+  }
 
   const url = new URL(req.url);
   const idParam = url.searchParams.get("id");
@@ -152,14 +233,23 @@ export async function GET(req: Request) {
       .order("submitted_at", { ascending: false })
       .limit(20);
     if (error) return apiError(error.message, 500);
-    return apiResponse({ batches: data ?? [] });
+    const safeRows = ((data ?? []) as Array<Record<string, unknown>>).map(sanitiseBatchRow);
+    return apiResponse({ batches: safeRows });
   }
 
-  const updated: Array<Record<string, unknown>> = [];
-  for (const row of rows) {
-    const result = await pollAndProcessOne(row);
-    updated.push(result);
-  }
+  // Independent reads from Anthropic + DB writes per row, so poll in
+  // parallel. allSettled (not all) so a single batch's unexpected
+  // throw - e.g. a Supabase outage during the tracking-row update -
+  // doesn't reject the whole request and wipe progress on the others.
+  const settled = await Promise.allSettled(rows.map(pollAndProcessOne));
+  const updated = settled.map((s, i) => {
+    if (s.status === "fulfilled") return sanitiseBatchRow(s.value);
+    console.error(
+      `[classify-batch] poll worker rejected for id=${rows[i]?.id}:`,
+      s.reason instanceof Error ? s.reason.message : s.reason,
+    );
+    return { ...sanitiseBatchRow(rows[i]), _poll_error: "Poll failed; see server logs" };
+  });
 
   return apiResponse({ batches: updated });
 }
@@ -188,7 +278,12 @@ async function pollAndProcessOne(
     return row;
   }
 
-  if (status.processing_status === "in_progress") {
+  // "in_progress" and "canceling" are both transient. Anthropic transitions
+  // canceling -> canceled as the cancel propagates; treating canceling as
+  // terminal would write "completed" with zero counts to a row that will
+  // never be re-polled (SELECT filters .eq("status", "in_progress")), so
+  // the batch's actual outcome would be permanently lost.
+  if (status.processing_status === "in_progress" || status.processing_status === "canceling") {
     return { ...row, _live_status: status.processing_status, _request_counts: status.request_counts };
   }
 
@@ -196,33 +291,41 @@ async function pollAndProcessOne(
   // are available, then mark the tracking row complete with counts.
   let succeeded = 0;
   let errored = 0;
+  let finalStatus: ClassifyBatchFinalStatus = determineFinalStatus(status);
+  let processingNote: string | null = null;
   if (status.results_url) {
     try {
       const counts = await processBatchResults(anthropicBatchId, status.results_url);
       succeeded = counts.succeeded;
       errored = counts.errored;
     } catch (err) {
-      console.warn(`[classify-batch] processing failed for ${anthropicBatchId}:`, err);
+      // Don't quietly mark the batch completed with zeroes - we genuinely
+      // don't know what landed. Flag as errored so the dashboard surfaces
+      // the failure and a human can re-submit if needed.
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[classify-batch] processing failed for ${anthropicBatchId}:`, msg);
+      finalStatus = "errored";
+      processingNote = `processBatchResults failed: ${msg}`;
     }
   }
 
-  const finalStatus: "completed" | "canceled" | "expired" | "errored" =
-    status.processing_status === "canceled"
-      ? "canceled"
-      : status.request_counts.expired > 0
-        ? "expired"
-        : status.request_counts.errored === status.request_counts.processing + status.request_counts.succeeded
-          ? "errored"
-          : "completed";
+  const updatePayload: {
+    status: ClassifyBatchFinalStatus;
+    completed_at: string;
+    succeeded_count: number;
+    errored_count: number;
+    notes?: string;
+  } = {
+    status: finalStatus,
+    completed_at: status.ended_at || new Date().toISOString(),
+    succeeded_count: succeeded,
+    errored_count: errored,
+  };
+  if (processingNote) updatePayload.notes = processingNote;
 
   const { data: updatedRow, error: updateErr } = await supabase
     .from("classify_batches")
-    .update({
-      status: finalStatus,
-      completed_at: status.ended_at || new Date().toISOString(),
-      succeeded_count: succeeded,
-      errored_count: errored,
-    } as never)
+    .update(updatePayload)
     .eq("id", id)
     .select()
     .single();

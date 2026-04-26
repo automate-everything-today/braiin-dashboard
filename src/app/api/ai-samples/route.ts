@@ -1,6 +1,7 @@
 import { supabase } from "@/services/base";
 import { getSession } from "@/lib/session";
 import { apiError, apiResponse } from "@/lib/validation";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 /**
  * Manager review of the AI writing-voice corpus. The corpus drives the
@@ -83,10 +84,16 @@ export async function DELETE(req: Request) {
   if (session.role !== "super_admin" && !(await isManager(session.email))) {
     return apiError("Forbidden", 403);
   }
+  if (!(await checkRateLimit(`ai-samples-delete:${session.email.toLowerCase()}`, 60))) {
+    return apiError("Too many requests. Please slow down.", 429);
+  }
   const url = new URL(req.url);
   const id = parseInt(url.searchParams.get("id") || "0");
   if (!id) return apiError("id required", 400);
   const { error } = await supabase.from("ai_writing_samples").delete().eq("id", id);
-  if (error) return apiError(error.message, 500);
+  if (error) {
+    console.error("[ai-samples] delete failed:", error.message);
+    return apiError("Delete failed. Please try again.", 500);
+  }
   return apiResponse({ success: true });
 }

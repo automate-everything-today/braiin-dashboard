@@ -1,12 +1,6 @@
-import { supabase as typedSupabase } from "@/services/base";
+import { supabase } from "@/services/base";
 import { OUTLOOK_TASKS_SYNC_ENABLED, listTasksSince } from "@/lib/outlook-todo";
-
-// The generated Database type doesn't yet know about migration 017's
-// outlook_task_id / last_synced_at / sync_status columns. Cast at the
-// top of this file so the cron stays readable rather than peppered with
-// unknown casts.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const supabase = typedSupabase as any;
+import { requireCronAuth } from "@/lib/cron-auth";
 
 /**
  * Pull-side reconciliation. Every 15 min, ask Graph "what tasks have
@@ -22,11 +16,8 @@ const supabase = typedSupabase as any;
  */
 
 export async function GET(req: Request) {
-  const authHeader = req.headers.get("authorization") || "";
-  const expected = `Bearer ${process.env.CRON_SECRET || ""}`;
-  if (!process.env.CRON_SECRET || authHeader !== expected) {
-    return Response.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const denied = requireCronAuth(req);
+  if (denied) return denied;
   if (!OUTLOOK_TASKS_SYNC_ENABLED) {
     return Response.json({ skipped: "OUTLOOK_TASKS_SYNC_ENABLED is false" });
   }
@@ -87,7 +78,7 @@ export async function GET(req: Request) {
           completed_at: remoteStatus === "completed" ? new Date().toISOString() : null,
           last_synced_at: new Date().toISOString(),
           sync_status: "synced",
-        } as never)
+        })
         .eq("id", (local as { id: number }).id);
       updated++;
     }

@@ -146,6 +146,33 @@ export async function fetchBatchStatus(batchId: string): Promise<AnthropicBatch>
 }
 
 /**
+ * Single source of truth for translating an Anthropic batch outcome
+ * into our `classify_batches.status` column.
+ *
+ * Order matters:
+ *   - canceled wins outright (Anthropic flag, not derivable from counts)
+ *   - any expired requests => expired (timeout, not retried)
+ *   - all-non-canceled requests errored => errored (whole batch failed)
+ *   - otherwise => completed (partial success counts as completed; the
+ *     individual errored_count is tracked separately on the row)
+ *
+ * Both the manual GET and the cron poller call this so they cannot drift.
+ */
+export type ClassifyBatchFinalStatus = "completed" | "canceled" | "expired" | "errored";
+
+export function determineFinalStatus(status: AnthropicBatch): ClassifyBatchFinalStatus {
+  if (status.processing_status === "canceled") return "canceled";
+  const c = status.request_counts;
+  if (c.expired > 0) return "expired";
+  // All-errored batches: zero successes and at least one error means
+  // the batch as a whole failed. Partial success (mix of errored and
+  // succeeded) still counts as completed - errored_count is tracked
+  // separately on the row so the UI can show "9/10 succeeded".
+  if (c.succeeded === 0 && c.errored > 0) return "errored";
+  return "completed";
+}
+
+/**
  * Download and parse the JSONL results file for a completed batch. Each
  * line is one request's outcome, with custom_id matching the email_id we
  * submitted. Writes successful classifications back to email_classifications
@@ -229,7 +256,7 @@ export async function processBatchResults(
           ai_incident_detected: classification.incident_detected || null,
           ai_tags: aiTags,
           ai_conversation_stage: aiStage,
-        } as never,
+        },
         { onConflict: "email_id" },
       );
 

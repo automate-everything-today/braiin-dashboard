@@ -1,6 +1,7 @@
 import { supabase } from "@/services/base";
 import { getSession } from "@/lib/session";
 import { apiError, apiResponse } from "@/lib/validation";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { z } from "zod";
 import {
   OUTLOOK_TASKS_SYNC_ENABLED,
@@ -9,6 +10,16 @@ import {
   updateOutlookTask,
   deleteOutlookTask,
 } from "@/lib/outlook-todo";
+
+// 120/min per user covers heavy task triage (bulk completion, repeated
+// status flips) without leaving the endpoint open as a soft DoS vector.
+const TASKS_WRITE_LIMIT_PER_MIN = 120;
+
+async function enforceWriteRate(email: string): Promise<Response | null> {
+  const ok = await checkRateLimit(`tasks-write:${email.toLowerCase()}`, TASKS_WRITE_LIMIT_PER_MIN);
+  if (!ok) return apiError("Too many requests. Please slow down.", 429);
+  return null;
+}
 
 /**
  * REST CRUD for Tasks. Replaces the direct Supabase calls from the
@@ -53,6 +64,44 @@ async function isManager(email: string): Promise<boolean> {
     .eq("email", email.toLowerCase())
     .maybeSingle();
   return Boolean((data as { is_manager?: boolean } | null)?.is_manager);
+}
+
+async function getManagerMeta(email: string): Promise<{ isManager: boolean; department: string | null }> {
+  const { data } = await supabase
+    .from("staff")
+    .select("is_manager, department")
+    .eq("email", email.toLowerCase())
+    .maybeSingle();
+  const row = data as { is_manager?: boolean; department?: string | null } | null;
+  return {
+    isManager: Boolean(row?.is_manager),
+    department: row?.department ?? null,
+  };
+}
+
+/**
+ * Verify a manager has authority over a task: at least one of the
+ * task's assignee or creator must be in the manager's department.
+ * Mirrors GET's ?scope=team semantics so the manager's read view and
+ * their write authority match - prevents an Ops manager from editing
+ * a task created by + assigned to Sales staff.
+ */
+async function managerOwnsTask(
+  managerDept: string | null,
+  taskAssignedTo: string | null,
+  taskCreatedBy: string | null,
+): Promise<boolean> {
+  if (!managerDept) return false;
+  const candidates = [taskAssignedTo, taskCreatedBy]
+    .map((e) => (e || "").toLowerCase())
+    .filter(Boolean);
+  if (candidates.length === 0) return false;
+  const { data } = await supabase
+    .from("staff")
+    .select("email")
+    .in("email", candidates)
+    .eq("department", managerDept);
+  return ((data || []) as Array<{ email?: string | null }>).length > 0;
 }
 
 export async function GET(req: Request) {
@@ -109,6 +158,8 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const session = await getSession();
   if (!session?.email) return apiError("Not authenticated", 401);
+  const limited = await enforceWriteRate(session.email);
+  if (limited) return limited;
 
   const body = await req.json().catch(() => null);
   const parsed = createSchema.safeParse(body);
@@ -125,7 +176,7 @@ export async function POST(req: Request) {
   // Insert local row first, then push to Outlook. If Outlook fails the
   // task still exists locally with sync_status='pending' and the cron
   // (when added) can retry.
-  const insertPayload: Record<string, unknown> = {
+  const insertPayload = {
     title: input.title,
     description: input.description ?? null,
     account_code: input.account_code ?? null,
@@ -138,11 +189,15 @@ export async function POST(req: Request) {
     source_type: input.source_type,
     source_id: input.source_id ?? null,
     source_url: input.source_url ?? null,
-    sync_status: OUTLOOK_TASKS_SYNC_ENABLED ? "pending" : "disabled",
+    sync_status: (OUTLOOK_TASKS_SYNC_ENABLED ? "pending" : "disabled") as
+      | "synced"
+      | "pending"
+      | "error"
+      | "disabled",
   };
   const { data: created, error: insertErr } = await supabase
     .from("tasks")
-    .insert(insertPayload as never)
+    .insert(insertPayload)
     .select()
     .single();
   if (insertErr) return apiError(insertErr.message, 500);
@@ -166,12 +221,12 @@ export async function POST(req: Request) {
             outlook_list_id: listId,
             last_synced_at: new Date().toISOString(),
             sync_status: "synced",
-          } as never)
+          })
           .eq("id", (created as { id: number }).id);
       } else {
         await supabase
           .from("tasks")
-          .update({ sync_status: "error" } as never)
+          .update({ sync_status: "error" })
           .eq("id", (created as { id: number }).id);
       }
     }
@@ -188,6 +243,8 @@ export async function POST(req: Request) {
 export async function PATCH(req: Request) {
   const session = await getSession();
   if (!session?.email) return apiError("Not authenticated", 401);
+  const limited = await enforceWriteRate(session.email);
+  if (limited) return limited;
 
   const body = await req.json().catch(() => null);
   const parsed = updateSchema.safeParse(body);
@@ -213,11 +270,26 @@ export async function PATCH(req: Request) {
     session.role === "super_admin" ||
     row.assigned_to === me ||
     row.created_by === me;
-  if (!ownerOk && !(await isManager(me))) {
-    return apiError("Forbidden", 403);
+  if (!ownerOk) {
+    const meta = await getManagerMeta(me);
+    if (!meta.isManager) return apiError("Forbidden", 403);
+    const inDept = await managerOwnsTask(
+      meta.department,
+      (row.assigned_to as string | null) ?? null,
+      (row.created_by as string | null) ?? null,
+    );
+    if (!inDept) return apiError("Forbidden", 403);
   }
 
-  const updates: Record<string, unknown> = {};
+  const updates: {
+    title?: string;
+    description?: string | null;
+    assigned_to?: string | null;
+    due_date?: string | null;
+    priority?: "urgent" | "high" | "medium" | "low";
+    status?: "open" | "in_progress" | "completed" | "cancelled";
+    completed_at?: string | null;
+  } = {};
   if (patch.title !== undefined) updates.title = patch.title;
   if (patch.description !== undefined) updates.description = patch.description;
   if (patch.assigned_to !== undefined) updates.assigned_to = patch.assigned_to;
@@ -230,10 +302,11 @@ export async function PATCH(req: Request) {
 
   const { error: updateErr } = await supabase
     .from("tasks")
-    .update(updates as never)
+    .update(updates)
     .eq("id", id);
   if (updateErr) return apiError(updateErr.message, 500);
 
+  let syncWarning: string | null = null;
   if (OUTLOOK_TASKS_SYNC_ENABLED && row.outlook_task_id && row.outlook_list_id) {
     const ok = await updateOutlookTask({
       userEmail: ((row.assigned_to as string) || me).toLowerCase(),
@@ -241,12 +314,16 @@ export async function PATCH(req: Request) {
       taskId: row.outlook_task_id as string,
       patch,
     });
+    if (!ok) {
+      syncWarning = "Outlook sync failed. Local task is up to date but the change has not yet propagated to your Outlook tasks.";
+      console.error(`[tasks PATCH] Outlook sync failed for task id=${id}`);
+    }
     await supabase
       .from("tasks")
       .update({
         sync_status: ok ? "synced" : "error",
         last_synced_at: new Date().toISOString(),
-      } as never)
+      })
       .eq("id", id);
   }
 
@@ -255,12 +332,14 @@ export async function PATCH(req: Request) {
     .select("*")
     .eq("id", id)
     .single();
-  return apiResponse({ task: final });
+  return apiResponse(syncWarning ? { task: final, sync_warning: syncWarning } : { task: final });
 }
 
 export async function DELETE(req: Request) {
   const session = await getSession();
   if (!session?.email) return apiError("Not authenticated", 401);
+  const limited = await enforceWriteRate(session.email);
+  if (limited) return limited;
   const url = new URL(req.url);
   const id = parseInt(url.searchParams.get("id") || "0");
   if (!id) return apiError("id required", 400);
@@ -277,19 +356,31 @@ export async function DELETE(req: Request) {
     session.role === "super_admin" ||
     row.created_by === me ||
     row.assigned_to === me;
-  if (!ownerOk && !(await isManager(me))) {
-    return apiError("Forbidden", 403);
+  if (!ownerOk) {
+    const meta = await getManagerMeta(me);
+    if (!meta.isManager) return apiError("Forbidden", 403);
+    const inDept = await managerOwnsTask(
+      meta.department,
+      (row.assigned_to as string | null) ?? null,
+      (row.created_by as string | null) ?? null,
+    );
+    if (!inDept) return apiError("Forbidden", 403);
   }
 
+  let syncWarning: string | null = null;
   if (OUTLOOK_TASKS_SYNC_ENABLED && row.outlook_task_id && row.outlook_list_id) {
-    await deleteOutlookTask({
+    const ok = await deleteOutlookTask({
       userEmail: ((row.assigned_to as string) || me).toLowerCase(),
       listId: row.outlook_list_id as string,
       taskId: row.outlook_task_id as string,
     });
+    if (!ok) {
+      syncWarning = "Task deleted locally, but the matching Outlook task could not be removed. You may want to delete it manually in Outlook.";
+      console.error(`[tasks DELETE] Outlook delete failed for task id=${id} outlook_task_id=${row.outlook_task_id}`);
+    }
   }
 
   const { error } = await supabase.from("tasks").delete().eq("id", id);
   if (error) return apiError(error.message, 500);
-  return apiResponse({ success: true });
+  return apiResponse(syncWarning ? { success: true, sync_warning: syncWarning } : { success: true });
 }

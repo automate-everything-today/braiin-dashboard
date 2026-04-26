@@ -84,7 +84,7 @@ export async function POST(req: Request) {
       website: input.website ?? null,
       notes: input.notes ?? null,
       active: input.active,
-    } as never)
+    })
     .select()
     .single();
   if (error) return apiError(error.message, 500);
@@ -108,7 +108,18 @@ export async function PATCH(req: Request) {
   }
   const { id, ...updates } = parsed.data;
 
-  const payload: Record<string, unknown> = {};
+  const payload: {
+    name?: string;
+    primary_domain?: string;
+    additional_domains?: string[];
+    relationship?: "member" | "non-member" | "prospect" | "declined";
+    network_type?: "general" | "project_cargo" | "specialised" | "association";
+    annual_fee_gbp?: number | null;
+    events_per_year?: number | null;
+    website?: string | null;
+    notes?: string | null;
+    active?: boolean;
+  } = {};
   if (updates.name !== undefined) payload.name = updates.name.trim();
   if (updates.primary_domain !== undefined) payload.primary_domain = normaliseDomain(updates.primary_domain);
   if (updates.additional_domains !== undefined) payload.additional_domains = updates.additional_domains.map(normaliseDomain);
@@ -122,7 +133,7 @@ export async function PATCH(req: Request) {
 
   const { data, error } = await supabase
     .from("freight_networks")
-    .update(payload as never)
+    .update(payload)
     .eq("id", id)
     .select()
     .single();

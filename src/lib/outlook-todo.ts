@@ -28,7 +28,15 @@ export type OutlookTask = {
   lastModifiedDateTime?: string;
 };
 
-async function getAppToken(): Promise<string | null> {
+// Module-level token cache. App-only tokens are valid for ~1 hour;
+// without caching, a single task POST can trigger 3 token fetches
+// (getDefaultListId, createOutlookTask, sync-status update) and the
+// 15-min sync cron compounds the cost. Refreshes 60s before expiry to
+// avoid serving a token that races with its own expiration.
+let cachedToken: { value: string; expiresAt: number } | null = null;
+const TOKEN_REFRESH_BUFFER_MS = 60_000;
+
+async function fetchFreshToken(): Promise<{ value: string; expiresAt: number } | null> {
   try {
     const res = await fetch(`https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token`, {
       method: "POST",
@@ -45,11 +53,30 @@ async function getAppToken(): Promise<string | null> {
       console.error("[outlook-todo] getAppToken: no access_token", data.error || data);
       return null;
     }
-    return data.access_token;
+    // expires_in is seconds (typically 3599). Subtract the refresh
+    // buffer so callers never get a token that's about to expire.
+    const ttlMs = (Number(data.expires_in) || 3600) * 1000;
+    return {
+      value: data.access_token as string,
+      expiresAt: Date.now() + ttlMs - TOKEN_REFRESH_BUFFER_MS,
+    };
   } catch (err) {
     console.error("[outlook-todo] getAppToken failed:", err);
     return null;
   }
+}
+
+async function getAppToken(): Promise<string | null> {
+  if (cachedToken && cachedToken.expiresAt > Date.now()) {
+    return cachedToken.value;
+  }
+  const fresh = await fetchFreshToken();
+  if (!fresh) {
+    cachedToken = null;
+    return null;
+  }
+  cachedToken = fresh;
+  return fresh.value;
 }
 
 /**

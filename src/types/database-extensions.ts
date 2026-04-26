@@ -10,10 +10,106 @@
 import type { Database as GeneratedDatabase } from "./database";
 
 type PublicSchema = GeneratedDatabase["public"];
+type GenTables = PublicSchema["Tables"];
+
+// Add columns to a generated table without rebuilding the whole shape.
+// Used when a migration ALTERs an existing table (017 on tasks, 016 on
+// user_preferences, 019 on email_classifications).
+type Augment<
+  T extends { Row: object; Insert: object; Update: object; Relationships: unknown },
+  Add extends { Row?: object; Insert?: object; Update?: object },
+> = {
+  Row: T["Row"] & (Add extends { Row: infer R } ? R : Record<string, never>);
+  Insert: T["Insert"] & (Add extends { Insert: infer I } ? I : Record<string, never>);
+  Update: T["Update"] & (Add extends { Update: infer U } ? U : Record<string, never>);
+  Relationships: T["Relationships"];
+};
+
+// Migration: 017_tasks_sync.sql ADDs columns to existing tasks table.
+type TasksSyncAdd = {
+  Row: {
+    outlook_task_id: string | null;
+    outlook_list_id: string | null;
+    last_synced_at: string | null;
+    sync_status: "synced" | "pending" | "error" | "disabled" | null;
+    source_type: "manual" | "email" | "deal" | "incident" | "ai" | null;
+    source_id: string | null;
+    source_url: string | null;
+  };
+  Insert: {
+    outlook_task_id?: string | null;
+    outlook_list_id?: string | null;
+    last_synced_at?: string | null;
+    sync_status?: "synced" | "pending" | "error" | "disabled" | null;
+    source_type?: "manual" | "email" | "deal" | "incident" | "ai" | null;
+    source_id?: string | null;
+    source_url?: string | null;
+  };
+  Update: {
+    outlook_task_id?: string | null;
+    outlook_list_id?: string | null;
+    last_synced_at?: string | null;
+    sync_status?: "synced" | "pending" | "error" | "disabled" | null;
+    source_type?: "manual" | "email" | "deal" | "incident" | "ai" | null;
+    source_id?: string | null;
+    source_url?: string | null;
+  };
+};
+
+// Migration: 016_ai_learning_share_team.sql ADDs ai_learning_share_team
+// to user_preferences.
+type UserPrefsShareTeamAdd = {
+  Row: { ai_learning_share_team: boolean | null };
+  Insert: { ai_learning_share_team?: boolean | null };
+  Update: { ai_learning_share_team?: boolean | null };
+};
+
+// Combined extension for email_classifications spanning migrations
+// 011 (ai_relevant_department / ai_relevant_mode), 012 (ai_tags /
+// user_tags / relevance_feedback), 013 (ai/user_conversation_stage),
+// and 019 (last_modified_by / last_modified_at).
+type EmailClassificationsAuditAdd = {
+  Row: {
+    ai_relevant_department: string | null;
+    ai_relevant_mode: "Air" | "Road" | "Sea" | "Warehousing" | null;
+    ai_tags: string[] | null;
+    user_tags: string[] | null;
+    relevance_feedback: "thumbs_up" | "thumbs_down" | null;
+    ai_conversation_stage: string | null;
+    user_conversation_stage: string | null;
+    last_modified_by: string | null;
+    last_modified_at: string | null;
+  };
+  Insert: {
+    ai_relevant_department?: string | null;
+    ai_relevant_mode?: "Air" | "Road" | "Sea" | "Warehousing" | null;
+    ai_tags?: string[] | null;
+    user_tags?: string[] | null;
+    relevance_feedback?: "thumbs_up" | "thumbs_down" | null;
+    ai_conversation_stage?: string | null;
+    user_conversation_stage?: string | null;
+    last_modified_by?: string | null;
+    last_modified_at?: string | null;
+  };
+  Update: {
+    ai_relevant_department?: string | null;
+    ai_relevant_mode?: "Air" | "Road" | "Sea" | "Warehousing" | null;
+    ai_tags?: string[] | null;
+    user_tags?: string[] | null;
+    relevance_feedback?: "thumbs_up" | "thumbs_down" | null;
+    ai_conversation_stage?: string | null;
+    user_conversation_stage?: string | null;
+    last_modified_by?: string | null;
+    last_modified_at?: string | null;
+  };
+};
 
 export type Database = {
   public: {
-    Tables: PublicSchema["Tables"] & {
+    Tables: Omit<GenTables, "tasks" | "user_preferences" | "email_classifications"> & {
+      tasks: Augment<GenTables["tasks"], TasksSyncAdd>;
+      user_preferences: Augment<GenTables["user_preferences"], UserPrefsShareTeamAdd>;
+      email_classifications: Augment<GenTables["email_classifications"], EmailClassificationsAuditAdd>;
       // Migration: 008_email_pins.sql
       email_pins: {
         Row: {

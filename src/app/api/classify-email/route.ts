@@ -203,8 +203,12 @@ export async function POST(req: Request) {
   const reqBody = await req.json();
 
   // Bulk hydration path. Exists on POST because Outlook message IDs are too
-  // long for a query string at typical batch sizes.
+  // long for a query string at typical batch sizes. Requires authentication -
+  // an unauthenticated caller has no business knowing which email_ids exist.
   if (reqBody && reqBody.bulk && Array.isArray(reqBody.bulk.ids)) {
+    if (!session?.email) {
+      return Response.json({ error: "Not authenticated" }, { status: 401 });
+    }
     const ids = (reqBody.bulk.ids as unknown[])
       .filter((s): s is string => typeof s === "string" && s.length > 0)
       .slice(0, 500);
@@ -353,7 +357,13 @@ export async function POST(req: Request) {
     .order("created_at", { ascending: false })
     .limit(20);
 
-  const feedbackContext = (feedback || []).map((f: any) =>
+  type FeedbackRow = {
+    from_email: string | null;
+    ai_category: string | null;
+    user_override_category: string | null;
+    user_feedback: string | null;
+  };
+  const feedbackContext = ((feedback || []) as FeedbackRow[]).map((f) =>
     `From: ${f.from_email} - AI said: ${f.ai_category}${f.user_override_category ? ` - User corrected to: ${f.user_override_category}` : ""}${f.user_feedback ? ` - Feedback: ${f.user_feedback}` : ""}`
   ).join("\n");
 
@@ -450,7 +460,7 @@ export async function POST(req: Request) {
       ? supabase.from("staff").select("email, name, department").in("email", sampleEmails)
       : Promise.resolve({ data: [] as StaffRow[] }),
     sampleEmails.length > 0
-      ? (supabase.from("user_preferences") as any).select("email, ai_learning_enabled, ai_learning_share_team").in("email", sampleEmails)
+      ? supabase.from("user_preferences").select("email, ai_learning_enabled, ai_learning_share_team").in("email", sampleEmails)
       : Promise.resolve({ data: [] as PrefsRow[] }),
   ]);
   const staffByEmail = new Map<string, StaffRow>();
@@ -512,8 +522,12 @@ export async function POST(req: Request) {
         .join("\n")
     : "";
 
+  type SenderHistoryRow = {
+    user_override_category: string | null;
+    ai_category: string | null;
+  };
   const senderPattern = senderHistory?.length
-    ? `This sender has been previously classified as: ${senderHistory.map((s: any) => s.user_override_category || s.ai_category).join(", ")}`
+    ? `This sender has been previously classified as: ${(senderHistory as SenderHistoryRow[]).map((s) => s.user_override_category || s.ai_category).join(", ")}`
     : "";
 
   // Layered reply rules: pulled from reply_rules at six scope levels
@@ -610,9 +624,8 @@ Classify this email per the rules above and return JSON.`;
     const aiTags = normaliseTags(classification.tags);
     const aiStage = normaliseStage(classification.conversation_stage);
 
-    // Save ALL fields to DB including advanced ones. Cast required because
-    // migrations 012 + 013 add columns which aren't yet in the generated
-    // Database type.
+    // Save ALL fields to DB including advanced ones (migrations 012 + 013
+    // columns are picked up via database-extensions.ts).
     await supabase.from("email_classifications").upsert({
       email_id,
       subject: subject || "",
@@ -627,7 +640,7 @@ Classify this email per the rules above and return JSON.`;
       ai_incident_detected: classification.incident_detected || null,
       ai_tags: aiTags,
       ai_conversation_stage: aiStage,
-    } as never, { onConflict: "email_id" });
+    }, { onConflict: "email_id" });
 
     // Best-effort usage tracking so managers can see which rules are live.
     if (rules.length > 0) {
@@ -647,9 +660,12 @@ Classify this email per the rules above and return JSON.`;
       },
       cached: false,
     });
-  } catch (e: any) {
+  } catch (e: unknown) {
+    // Log the full error server-side; return a generic message to the
+    // client so we don't leak DB error strings, stack traces, or
+    // internal IDs in 500 responses.
     console.error("[classify-email] Unexpected failure:", e);
-    return Response.json({ error: e.message }, { status: 500 });
+    return Response.json({ error: "Classification failed. Please try again." }, { status: 500 });
   }
 }
 
@@ -666,7 +682,16 @@ export async function PUT(req: Request) {
   const { email_id, rating, feedback, override_category, user_tags, relevance_feedback, user_conversation_stage } = body;
   if (!email_id) return Response.json({ error: "Missing email_id" }, { status: 400 });
 
-  const updates: Record<string, unknown> = {};
+  const updates: {
+    user_rating?: string | null;
+    user_feedback?: string | null;
+    user_override_category?: string | null;
+    user_tags?: string[] | null;
+    relevance_feedback?: "thumbs_up" | "thumbs_down" | null;
+    user_conversation_stage?: string | null;
+    last_modified_by?: string;
+    last_modified_at?: string;
+  } = {};
   if (rating !== undefined) updates.user_rating = rating;
   if (feedback !== undefined) updates.user_feedback = feedback || "";
   if (override_category !== undefined) updates.user_override_category = override_category || "";
@@ -709,14 +734,22 @@ export async function PUT(req: Request) {
     return Response.json({ error: "No updates provided" }, { status: 400 });
   }
 
+  // Audit who made the change. email_classifications rows are shared
+  // across the team (one row per email_id, no per-user override table
+  // yet), so anyone authenticated can overwrite anyone else's overrides.
+  // Stamping last_modified_by + last_modified_at gives us traceability
+  // until the per-user override schema lands.
+  updates.last_modified_by = session.email.toLowerCase();
+  updates.last_modified_at = new Date().toISOString();
+
   const { error } = await supabase
     .from("email_classifications")
-    .update(updates as never)
+    .update(updates)
     .eq("email_id", email_id);
 
   if (error) {
     console.error(`[classify-email] PUT failed for email_id=${email_id}:`, error.message);
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ error: "Update failed. Please try again." }, { status: 500 });
   }
 
   return Response.json({ success: true });
