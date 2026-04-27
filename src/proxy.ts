@@ -20,6 +20,9 @@ export async function proxy(req: NextRequest) {
   // Allow cron routes (secured by CRON_SECRET in the route handler)
   if (pathname.startsWith("/api/cron/")) return NextResponse.next();
 
+  // Allow inbound webhook routes (secured by INBOUND_WEBHOOK_SECRET in the route handler)
+  if (pathname.startsWith("/api/inbound/")) return NextResponse.next();
+
   const cookie = req.cookies.get(SESSION_COOKIE_NAME);
   if (!cookie?.value) {
     return NextResponse.json({ success: false, error: "Not authenticated" }, { status: 401 });
