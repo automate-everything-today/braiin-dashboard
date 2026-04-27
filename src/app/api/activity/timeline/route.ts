@@ -22,8 +22,8 @@
 
 import { supabase } from "@/services/base";
 import { getSession } from "@/lib/session";
+import { TENANT_ZERO_ORG_ID } from "@/lib/activity/log-event";
 
-const CORTEN_ORG_ID = "00000000-0000-0000-0000-000000000001";
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
@@ -135,7 +135,7 @@ export async function GET(req: Request) {
 
   const role = session.role || "rep";
   const allowedVisibilities = visibleToRole(role);
-  const orgId = CORTEN_ORG_ID;
+  const orgId = TENANT_ZERO_ORG_ID;
 
   // Step 1: collect event_ids that are SECONDARY-linked to this subject
   // via activity.event_links (the primary-bound rows are caught by the

@@ -18,6 +18,15 @@ import { supabase } from "@/services/base";
 
 const INBOUND_DOMAIN = process.env.INBOUND_EMAIL_DOMAIN || "inbound.braiin.app";
 
+/**
+ * The deterministic UUID seeded for Corten Logistics in
+ * core.organisations (migration 021). Used as the default org_id
+ * for any caller that doesn't yet carry org context (single-tenant
+ * deployment). Replace with a session-derived org_id when the
+ * multi-tenant cookie shape lands.
+ */
+export const TENANT_ZERO_ORG_ID = "00000000-0000-0000-0000-000000000001";
+
 // ============================================================
 // Public types
 // ============================================================

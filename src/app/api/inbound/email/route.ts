@@ -19,10 +19,9 @@
  */
 
 import { supabase } from "@/services/base";
-import { logEvent, type EmailMetadata } from "@/lib/activity/log-event";
+import { logEvent, TENANT_ZERO_ORG_ID, type EmailMetadata } from "@/lib/activity/log-event";
 
 const WEBHOOK_SECRET = process.env.INBOUND_WEBHOOK_SECRET;
-const CORTEN_ORG_ID = "00000000-0000-0000-0000-000000000001";
 
 interface InboundPayload {
   envelope?: { to?: string; from?: string; recipients?: string[] };
@@ -246,7 +245,7 @@ export async function POST(req: Request) {
   }
 
   if (!matched && (inReplyTo || references.length)) {
-    matched = await lookupByMessageId(CORTEN_ORG_ID, inReplyTo, references);
+    matched = await lookupByMessageId(TENANT_ZERO_ORG_ID, inReplyTo, references);
   }
 
   const attachmentsForLog = payload.attachments?.map((a) => ({
@@ -259,7 +258,7 @@ export async function POST(req: Request) {
 
   if (!matched) {
     await logEvent({
-      orgId: CORTEN_ORG_ID,
+      orgId: TENANT_ZERO_ORG_ID,
       eventType: "email_received",
       direction: "inbound",
       channel: "email",
