@@ -17,8 +17,8 @@ import {
   type ConversationStage,
 } from "@/lib/conversation-stages";
 import { findNetworkByEmail, describeNetworkForPrompt } from "@/lib/freight-networks";
+import { complete as llmComplete, LlmGatewayError } from "@/lib/llm-gateway";
 
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
 const MODEL = "claude-haiku-4-5-20251001";
 const BODY_MAX_CHARS = 4000;
 
@@ -584,37 +584,19 @@ ${bodyText ? `\nBody:\n${bodyText}\n` : ""}
 Classify this email per the rules above and return JSON.`;
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 800,
-        system: [
-          {
-            type: "text",
-            text: CLASSIFIER_RULES,
-            // 5-minute ephemeral cache on the static rules. First call in a
-            // burst pays full price, subsequent calls within 5 min pay ~10%.
-            cache_control: { type: "ephemeral" },
-          },
-        ],
-        messages: [{ role: "user", content: userMessage }],
-      }),
+    const llmResult = await llmComplete({
+      purpose: "classify_email",
+      model: MODEL,
+      maxTokens: 800,
+      // Static classifier rules cached for 5 minutes via Anthropic's
+      // ephemeral prompt cache. First call in a burst pays full price,
+      // subsequent calls within 5 min pay ~10%.
+      system: { text: CLASSIFIER_RULES, cacheControl: "ephemeral" },
+      user: userMessage,
+      requestedBy: session?.email ?? "service_role",
     });
 
-    if (!res.ok) {
-      const errBody = await res.text();
-      console.error("[classify-email] Anthropic API error:", res.status, errBody);
-      return Response.json({ error: "Classification service unavailable" }, { status: 502 });
-    }
-
-    const data = await res.json();
-    let text = data.content?.[0]?.text || "{}";
+    let text = llmResult.text || "{}";
     text = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     const classification = JSON.parse(text);
 
@@ -661,9 +643,15 @@ Classify this email per the rules above and return JSON.`;
       cached: false,
     });
   } catch (e: unknown) {
-    // Log the full error server-side; return a generic message to the
-    // client so we don't leak DB error strings, stack traces, or
-    // internal IDs in 500 responses.
+    // LLM-side failure (network, provider 4xx/5xx) is a 502 - the
+    // service is reachable, we just can't classify right now.
+    if (e instanceof LlmGatewayError) {
+      console.error("[classify-email] LLM gateway error:", e.errorCode, e.message);
+      return Response.json({ error: "Classification service unavailable" }, { status: 502 });
+    }
+    // Anything else is a 500 - log full server-side, generic message
+    // to the client so we don't leak DB error strings, stack traces,
+    // or internal IDs in responses.
     console.error("[classify-email] Unexpected failure:", e);
     return Response.json({ error: "Classification failed. Please try again." }, { status: 500 });
   }
