@@ -1,0 +1,48 @@
+name: Refresh UN/LOCODE
+
+# Refreshes geo.countries + geo.locations from the UNECE-published
+# data mirror. UNECE typically releases UN/LOCODE twice yearly (May
+# and November), so we run on the 1st of June and 1st of December
+# at 03:00 UTC to pick up the latest release shortly after publication.
+#
+# Also runnable on demand via workflow_dispatch (manual trigger).
+#
+# Source data: github.com/datasets/un-locode (auto-published) and
+# github.com/datasets/country-codes (ISO 3166-1 + M49).
+#
+# Requires repo secrets:
+#   NEXT_PUBLIC_SUPABASE_URL       - Supabase project URL
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY  - anon key (only required by
+#                                    services/base.ts at module load)
+#   SUPABASE_SERVICE_KEY           - service role key (NOT anon)
+
+on:
+  schedule:
+    # 03:00 UTC on the 1st of June and December
+    - cron: "0 3 1 6,12 *"
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Run UN/LOCODE import
+        run: npm run import:unlocode
+
+      - name: Smoke test
+        run: npx tsx scripts/verify-unlocode.ts
