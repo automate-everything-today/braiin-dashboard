@@ -231,9 +231,13 @@ CREATE INDEX idx_threads_assigned
     ON activity.communication_threads (org_id, assigned_to, last_event_at DESC NULLS LAST)
     WHERE assigned_to IS NOT NULL AND is_open = TRUE;
 
+-- Partial index without NOW() comparison (NOW() is STABLE, not
+-- IMMUTABLE, so can't live in an index predicate). Queries filter
+-- by snoozed_until > NOW() at query time; the index is still
+-- sorted on snoozed_until so the planner uses it efficiently.
 CREATE INDEX idx_threads_snoozed
     ON activity.communication_threads (org_id, snoozed_until)
-    WHERE snoozed_until IS NOT NULL AND snoozed_until > NOW();
+    WHERE snoozed_until IS NOT NULL;
 
 -- ============================================================
 -- public.tasks - Missive task-card linkage
