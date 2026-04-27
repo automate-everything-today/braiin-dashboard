@@ -47,8 +47,18 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA activity TO service_role;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA activity TO service_role;
 
 -- Types (enum types like event_type, direction, channel are cast
--- explicitly in inserts via supabase-js type coercion)
-GRANT USAGE ON ALL TYPES IN SCHEMA activity TO service_role;
+-- explicitly in inserts via supabase-js type coercion).
+-- NOTE: Postgres has no `GRANT ON ALL TYPES IN SCHEMA` bulk syntax;
+-- types must be granted individually. The ALTER DEFAULT PRIVILEGES
+-- block below covers any types created in future migrations.
+GRANT USAGE ON TYPE activity.event_type      TO service_role;
+GRANT USAGE ON TYPE activity.direction       TO service_role;
+GRANT USAGE ON TYPE activity.channel         TO service_role;
+GRANT USAGE ON TYPE activity.visibility      TO service_role;
+GRANT USAGE ON TYPE activity.responsibility  TO service_role;
+GRANT USAGE ON TYPE activity.event_status    TO service_role;
+GRANT USAGE ON TYPE activity.entry_kind      TO service_role;
+GRANT USAGE ON TYPE activity.suggestion_type TO service_role;
 
 -- Default privileges for future objects added to the schema
 ALTER DEFAULT PRIVILEGES IN SCHEMA activity
