@@ -57,6 +57,40 @@ interface ConnectionRow {
   created_at: string;
 }
 
+interface AuditCall {
+  call_id: string;
+  operation: string;
+  requested_by: string;
+  request_summary: string | null;
+  requested_at: string;
+  duration_ms: number | null;
+  status: string;
+  http_status: number | null;
+  error_message: string | null;
+}
+
+interface FetchedShipment {
+  providerId: string;
+  tmsRef: string;
+  tmsRefType: string;
+  jobNumber?: string;
+  consolNumber?: string;
+  mbolNumber?: string;
+  hbolNumber?: string;
+  transportMode: string | null;
+  containerMode: string | null;
+  origin?: { unlocode?: string };
+  destination?: { unlocode?: string };
+  carrierCode?: string;
+  carrierName?: string;
+  vesselName?: string;
+  voyageNumber?: string;
+  eta?: string;
+  etd?: string;
+  ata?: string;
+  atd?: string;
+}
+
 interface StatusResp {
   ok: boolean;
   message: string;
@@ -85,6 +119,19 @@ const STATUS_BADGE: Record<string, string> = {
   received: "bg-zinc-100 text-zinc-700",
 };
 
+function fmtMaybeTime(iso: string | undefined): string {
+  return iso ? fmtTime(iso) : "";
+}
+
+function Field({ label, value, mono }: { label: string; value?: string | null; mono?: boolean }) {
+  return (
+    <div className="border-l-2 border-zinc-200 pl-2">
+      <div className="text-zinc-500 text-[10px] uppercase tracking-wide">{label}</div>
+      <div className={mono ? "font-mono" : ""}>{value || "-"}</div>
+    </div>
+  );
+}
+
 function fmtTime(iso: string | null): string {
   if (!iso) return "-";
   const d = new Date(iso);
@@ -96,9 +143,17 @@ export default function DevCargowisePage() {
   const [events, setEvents] = useState<RecentEvent[]>([]);
   const [subs, setSubs] = useState<RecentSubscription[]>([]);
   const [conns, setConns] = useState<ConnectionRow[]>([]);
+  const [outboundCalls, setOutboundCalls] = useState<AuditCall[]>([]);
   const [status, setStatus] = useState<StatusResp | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Fetch shipment form
+  const [fetchTarget, setFetchTarget] = useState<"ForwardingShipment" | "ForwardingConsol" | "CustomsDeclaration">("ForwardingShipment");
+  const [fetchKey, setFetchKey] = useState("");
+  const [fetching, setFetching] = useState(false);
+  const [fetchedShipment, setFetchedShipment] = useState<FetchedShipment | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   // subscribe form
   type RefType = "mbol" | "awb" | "container" | "booking";
@@ -159,6 +214,7 @@ export default function DevCargowisePage() {
         setEvents(r.events ?? []);
         setSubs(r.subscriptions ?? []);
         setConns(r.connections ?? []);
+        setOutboundCalls(r.outboundCalls ?? []);
       }
       if (s.error) setStatus({ ok: false, message: s.error });
       else setStatus(s);
@@ -174,6 +230,31 @@ export default function DevCargowisePage() {
     const t = setInterval(refresh, 10_000);
     return () => clearInterval(t);
   }, [refresh]);
+
+  const fetchShipment = async () => {
+    if (!fetchKey.trim()) return;
+    setFetching(true);
+    setFetchError(null);
+    setFetchedShipment(null);
+    try {
+      const r = await fetch("/api/dev/cargowise-fetch-shipment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataTargetType: fetchTarget, key: fetchKey.trim() }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setFetchError(d.error ?? `HTTP ${r.status}`);
+      } else {
+        setFetchedShipment(d.shipment ?? null);
+      }
+      refresh();
+    } catch (e: unknown) {
+      setFetchError(e instanceof Error ? e.message : "Fetch failed");
+    } finally {
+      setFetching(false);
+    }
+  };
 
   const submit = async () => {
     if (!tmsRef.trim()) {
@@ -357,6 +438,113 @@ export default function DevCargowisePage() {
               </Button>
               {submitMsg && <span className="text-sm text-zinc-600">{submitMsg}</span>}
             </div>
+          </CardContent>
+        </Card>
+
+        {/* eAdaptor: fetch shipment by key */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Fetch shipment / job (eAdaptor)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+              <div>
+                <label className="text-xs text-zinc-700 block mb-1">Module</label>
+                <select
+                  value={fetchTarget}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                    setFetchTarget(e.target.value as typeof fetchTarget)
+                  }
+                  className="w-full h-9 rounded border border-zinc-300 px-2 text-sm"
+                >
+                  <option value="ForwardingShipment">Forwarding Shipment</option>
+                  <option value="ForwardingConsol">Forwarding Consol</option>
+                  <option value="CustomsDeclaration">Customs Declaration</option>
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-zinc-700 block mb-1">Job number / key</label>
+                <input
+                  type="text"
+                  placeholder="AS123456"
+                  value={fetchKey}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFetchKey(e.target.value)}
+                  className="w-full h-9 rounded border border-zinc-300 px-2 text-sm uppercase"
+                />
+              </div>
+              <div>
+                <Button onClick={fetchShipment} disabled={fetching || !fetchKey.trim()} size="sm" className="w-full">
+                  {fetching ? "Fetching..." : "Fetch"}
+                </Button>
+              </div>
+            </div>
+            {fetchError && (
+              <p className="text-sm text-rose-700 mt-3">{fetchError}</p>
+            )}
+            {fetchedShipment && (
+              <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                <Field label="Job number" value={fetchedShipment.jobNumber} />
+                <Field label="Consol" value={fetchedShipment.consolNumber} />
+                <Field label="MBOL" value={fetchedShipment.mbolNumber} mono />
+                <Field label="HBOL" value={fetchedShipment.hbolNumber} mono />
+                <Field label="Mode" value={fetchedShipment.transportMode} />
+                <Field label="Container mode" value={fetchedShipment.containerMode} />
+                <Field label="Origin" value={fetchedShipment.origin?.unlocode} mono />
+                <Field label="Destination" value={fetchedShipment.destination?.unlocode} mono />
+                <Field label="Carrier" value={`${fetchedShipment.carrierName ?? ""} ${fetchedShipment.carrierCode ? `(${fetchedShipment.carrierCode})` : ""}`.trim()} />
+                <Field label="Vessel / Voyage" value={[fetchedShipment.vesselName, fetchedShipment.voyageNumber].filter(Boolean).join(" / ")} />
+                <Field label="ETA / ATA" value={[fetchedShipment.eta, fetchedShipment.ata].map(fmtMaybeTime).filter(Boolean).join(" / ")} />
+                <Field label="ETD / ATD" value={[fetchedShipment.etd, fetchedShipment.atd].map(fmtMaybeTime).filter(Boolean).join(" / ")} />
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Outbound audit */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Outbound calls (audit)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Operation</TableHead>
+                  <TableHead>By</TableHead>
+                  <TableHead>Summary</TableHead>
+                  <TableHead>HTTP</TableHead>
+                  <TableHead>Duration</TableHead>
+                  <TableHead>When</TableHead>
+                  <TableHead>Error</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {outboundCalls.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center text-zinc-400 text-sm">
+                      No outbound calls yet
+                    </TableCell>
+                  </TableRow>
+                )}
+                {outboundCalls.map((c) => (
+                  <TableRow key={c.call_id}>
+                    <TableCell>
+                      <Badge className={c.status === "success" ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}>
+                        {c.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{c.operation}</TableCell>
+                    <TableCell className="text-xs">{c.requested_by}</TableCell>
+                    <TableCell className="font-mono text-xs">{c.request_summary ?? "-"}</TableCell>
+                    <TableCell className="text-xs">{c.http_status ?? "-"}</TableCell>
+                    <TableCell className="text-xs">{c.duration_ms != null ? `${c.duration_ms}ms` : "-"}</TableCell>
+                    <TableCell className="text-xs">{fmtTime(c.requested_at)}</TableCell>
+                    <TableCell className="text-xs text-rose-700 truncate max-w-xs">{c.error_message ?? ""}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
 

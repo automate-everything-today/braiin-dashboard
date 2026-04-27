@@ -36,6 +36,8 @@ import {
   inferCarrierFromMbol,
   inferOwnerFromContainerNumber,
 } from "./carrier-lookup";
+import { fetchShipmentByKey, listDocumentsByKey } from "./edaptor/queries";
+import type { TmsDocument } from "../types";
 
 const CV_SUBSCRIPTIONS_PATH = "/api/v1/cargo-tracking/subscriptions";
 
@@ -180,9 +182,42 @@ export const cargowiseAdapter: TmsAdapter = {
     );
   },
 
-  // fetchShipment / listDocuments / fetchDocumentBytes intentionally
-  // unimplemented - they belong on the eAdaptor adapter, not Cargo
-  // Visibility. The interface keeps them optional.
+  // fetchShipment + listDocuments are implemented via eAdaptor HTTP+XML
+  // (the broader Cargowise integration surface). Cargo Visibility only
+  // covers tracking events - jobs, charges, and documents come from
+  // eAdaptor.
+
+  async fetchShipment(connection, tmsRef) {
+    // Default to ForwardingShipment - the smoke page can override via
+    // request.metadata when other module types are needed.
+    return await fetchShipmentByKey(connection, {
+      dataTargetType: "ForwardingShipment",
+      key: tmsRef,
+      requestedBy: "service_role",
+    });
+  },
+
+  async listDocuments(connection, tmsRef): Promise<TmsDocument[]> {
+    const rows = await listDocumentsByKey(connection, {
+      dataTargetType: "ForwardingShipment",
+      key: tmsRef,
+      descriptionsOnly: true,
+      requestedBy: "service_role",
+    });
+    return rows.map((r) => ({
+      providerId: "cargowise",
+      tmsDocId: r.documentId ?? "",
+      tmsRef,
+      tmsRefType: "shipment",
+      docType: r.documentType ?? "unknown",
+      contentType: r.contentType,
+      metadata: {
+        fileName: r.fileName,
+        isPublished: r.isPublished,
+        saveDateUtc: r.saveDateUtc,
+      },
+    }));
+  },
 };
 
 export {

@@ -105,9 +105,18 @@ export async function GET(req: Request) {
     .order("created_at", { ascending: false })
     .limit(20);
 
-  const [eventsR, subsR, connsR] = await Promise.all([eventsP, subsP, connsP]);
+  const auditP = tmsClient()
+    .from("outbound_calls")
+    .select(
+      "call_id,operation,requested_by,request_summary,requested_at,duration_ms,status,http_status,error_message",
+    )
+    .eq("org_id", TENANT_ZERO_ORG_ID)
+    .order("requested_at", { ascending: false })
+    .limit(limit);
 
-  if (eventsR.error || subsR.error || connsR.error) {
+  const [eventsR, subsR, connsR, auditR] = await Promise.all([eventsP, subsP, connsP, auditP]);
+
+  if (eventsR.error || subsR.error || connsR.error || auditR.error) {
     return Response.json(
       {
         error: "Failed to load",
@@ -115,6 +124,7 @@ export async function GET(req: Request) {
           events: eventsR.error?.message,
           subscriptions: subsR.error?.message,
           connections: connsR.error?.message,
+          outboundCalls: auditR.error?.message,
         },
       },
       { status: 500 },
@@ -125,5 +135,6 @@ export async function GET(req: Request) {
     events: (eventsR.data ?? []) as RecentEvent[],
     subscriptions: (subsR.data ?? []) as RecentSubscription[],
     connections: (connsR.data ?? []) as ConnectionRow[],
+    outboundCalls: auditR.data ?? [],
   });
 }
