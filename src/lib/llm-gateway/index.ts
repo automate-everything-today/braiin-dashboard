@@ -22,6 +22,7 @@
  */
 
 import { computeCacheKey, readCache, writeCache } from "./cache";
+import { resolveTimeSavedSeconds } from "./human-equivalents";
 import { meter } from "./metering";
 import { callAnthropic } from "./providers/anthropic";
 import {
@@ -95,6 +96,10 @@ export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
   const orgId = params.orgId ?? TENANT_ZERO_ORG_ID;
   const requestedBy = params.requestedBy ?? "service_role";
   const maxTokens = params.maxTokens ?? DEFAULT_MAX_TOKENS;
+  const timeSavedOnSuccess = resolveTimeSavedSeconds(
+    params.purpose,
+    params.humanEquivalentSeconds,
+  );
 
   // Cache key (only if caller opted in)
   const cacheKey = params.cacheKey
@@ -132,6 +137,7 @@ export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
         errorCode: null,
         errorMessage: null,
         metadata: { ...(params.metadata ?? {}), cache_layer: "content_hash" },
+        timeSavedSeconds: timeSavedOnSuccess,
       });
 
       return {
@@ -144,6 +150,7 @@ export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
         cacheHit: true,
         callId,
         latencyMs: 0,
+        timeSavedSeconds: timeSavedOnSuccess,
       };
     }
   }
@@ -189,6 +196,7 @@ export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
       errorCode: null,
       errorMessage: null,
       metadata: params.metadata ?? {},
+      timeSavedSeconds: timeSavedOnSuccess,
     });
 
     // === 3b. Cache write (if caller opted in) ===
@@ -216,6 +224,7 @@ export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
       cacheHit: false,
       callId,
       latencyMs,
+      timeSavedSeconds: timeSavedOnSuccess,
     };
   } catch (err) {
     const latencyMs = Date.now() - startedAt;
@@ -243,6 +252,7 @@ export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
       errorCode,
       errorMessage,
       metadata: params.metadata ?? {},
+      timeSavedSeconds: 0, // failures deliver no value
     });
 
     throw err;

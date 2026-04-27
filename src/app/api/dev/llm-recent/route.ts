@@ -33,6 +33,7 @@ interface LlmCallRow {
   requested_by: string;
   error_code: string | null;
   error_message: string | null;
+  time_saved_seconds: number;
 }
 
 interface ActivityClient {
@@ -60,7 +61,7 @@ export async function GET(req: Request) {
   const { data, error } = await activityClient()
     .from("llm_calls")
     .select(
-      "call_id,requested_at,provider,model,purpose,input_tokens,output_tokens,cached_input_tokens,cost_cents,latency_ms,cache_hit,success,requested_by,error_code,error_message",
+      "call_id,requested_at,provider,model,purpose,input_tokens,output_tokens,cached_input_tokens,cost_cents,latency_ms,cache_hit,success,requested_by,error_code,error_message,time_saved_seconds",
     )
     .eq("org_id", TENANT_ZERO_ORG_ID)
     .order("requested_at", { ascending: false })

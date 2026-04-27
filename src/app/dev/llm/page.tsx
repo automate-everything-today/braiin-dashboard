@@ -31,6 +31,18 @@ interface LlmCall {
   requested_by: string;
   error_code: string | null;
   error_message: string | null;
+  time_saved_seconds: number;
+}
+
+const HOURLY_RATE_GBP = 25; // rough freight-ops fully-loaded hourly cost - for ROI display
+
+function fmtDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = seconds / 60;
+  if (minutes < 60) return `${minutes.toFixed(0)}m`;
+  const hours = minutes / 60;
+  if (hours < 24) return `${hours.toFixed(1)}h`;
+  return `${(hours / 24).toFixed(1)}d`;
 }
 
 function isoStartOfToday(): string {
@@ -60,6 +72,7 @@ interface Bucket {
   failures: number;
   inputTokens: number;
   outputTokens: number;
+  timeSavedSeconds: number;
 }
 
 function emptyBucket(): Bucket {
@@ -70,6 +83,7 @@ function emptyBucket(): Bucket {
     failures: 0,
     inputTokens: 0,
     outputTokens: 0,
+    timeSavedSeconds: 0,
   };
 }
 
@@ -84,6 +98,7 @@ function bucketFromRows(rows: LlmCall[], sinceIso: string): Bucket {
     if (!r.success) out.failures += 1;
     out.inputTokens += r.input_tokens;
     out.outputTokens += r.output_tokens;
+    out.timeSavedSeconds += Number(r.time_saved_seconds ?? 0);
   }
   return out;
 }
@@ -202,7 +217,7 @@ export default function DevLlmPage() {
           </Button>
         </div>
 
-        {/* Period summary cards */}
+        {/* Period summary cards - cost + time-saved + ROI */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           {(
             [
@@ -210,28 +225,54 @@ export default function DevLlmPage() {
               { label: "This week", b: week },
               { label: "This month", b: month },
             ] as const
-          ).map(({ label, b }) => (
-            <Card key={label}>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-zinc-500 font-medium">
-                  {label}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold">{fmtCents(b.costCents)}</div>
-                <div className="text-xs text-zinc-500 mt-2 space-y-0.5">
-                  <div>{b.calls} calls</div>
-                  <div>
-                    cache hits {pct(b.cacheHits, b.calls)} · failures {b.failures}
+          ).map(({ label, b }) => {
+            const valueGbp = (b.timeSavedSeconds / 3600) * HOURLY_RATE_GBP;
+            const costGbp = b.costCents / 100; // treat cents as pence; close enough for ROI display
+            const roi = costGbp > 0 ? valueGbp / costGbp : null;
+            return (
+              <Card key={label}>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm text-zinc-500 font-medium">
+                    {label}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-xs text-zinc-500">Time saved</div>
+                      <div className="text-2xl font-bold text-emerald-600">
+                        {fmtDuration(b.timeSavedSeconds)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-zinc-500">Spend</div>
+                      <div className="text-2xl font-bold">{fmtCents(b.costCents)}</div>
+                    </div>
                   </div>
-                  <div>
-                    {(b.inputTokens / 1000).toFixed(1)}k in /{" "}
-                    {(b.outputTokens / 1000).toFixed(1)}k out
+                  {roi !== null && b.timeSavedSeconds > 0 && (
+                    <div className="mt-3 pt-3 border-t text-xs text-zinc-600">
+                      <span className="font-semibold text-emerald-700">
+                        {roi.toFixed(0)}x ROI
+                      </span>{" "}
+                      <span className="text-zinc-400">
+                        (≈£{valueGbp.toFixed(2)} of human time at £{HOURLY_RATE_GBP}/hr)
+                      </span>
+                    </div>
+                  )}
+                  <div className="text-xs text-zinc-500 mt-3 space-y-0.5">
+                    <div>{b.calls} calls</div>
+                    <div>
+                      cache hits {pct(b.cacheHits, b.calls)} · failures {b.failures}
+                    </div>
+                    <div>
+                      {(b.inputTokens / 1000).toFixed(1)}k in /{" "}
+                      {(b.outputTokens / 1000).toFixed(1)}k out
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
 
         {error && (

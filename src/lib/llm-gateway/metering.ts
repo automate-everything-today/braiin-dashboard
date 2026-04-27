@@ -42,6 +42,7 @@ export interface MeterParams {
   errorCode: string | null;
   errorMessage: string | null;
   metadata: Record<string, unknown>;
+  timeSavedSeconds: number;
 }
 
 /**
@@ -74,6 +75,7 @@ export async function meter(params: MeterParams): Promise<string> {
       error_code: params.errorCode,
       error_message: params.errorMessage ? params.errorMessage.slice(0, 1000) : null,
       metadata: params.metadata,
+      time_saved_seconds: params.timeSavedSeconds,
     });
 
     if (error) {

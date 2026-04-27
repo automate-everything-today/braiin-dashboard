@@ -75,6 +75,14 @@ export interface LlmCompleteParams {
   cacheTtlSeconds?: number;
 
   /**
+   * Override the default human-equivalent time for this purpose.
+   * If omitted, the gateway looks up `purpose` in
+   * `human-equivalents.ts` and falls back to 0 if not mapped.
+   * Counts on success (including cache hits); failures save 0.
+   */
+  humanEquivalentSeconds?: number;
+
+  /**
    * Tenant scope. Defaults to TENANT_ZERO_ORG_ID.
    * Required field once multi-tenant CRM ships.
    */
@@ -128,6 +136,14 @@ export interface LlmResult {
 
   /** End-to-end latency in milliseconds. */
   latencyMs: number;
+
+  /**
+   * Human-equivalent time saved by this call (seconds). Resolved
+   * from `human-equivalents.ts` per `purpose`, optionally
+   * overridden via `humanEquivalentSeconds` on the call params.
+   * Zero on failures.
+   */
+  timeSavedSeconds: number;
 }
 
 /** Result of a single provider call before caching/metering. */
