@@ -1,7 +1,6 @@
 import { supabase } from "@/services/base";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
+import { complete as llmComplete, LlmGatewayError } from "@/lib/llm-gateway";
 
 export async function POST(req: Request) {
   if (!(await checkRateLimit(getClientIp(req)))) {
@@ -88,27 +87,22 @@ Return a JSON object with:
 Return JSON only, no explanation.`;
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1500,
-        messages: [{ role: "user", content: prompt }],
-      }),
+    const llmResult = await llmComplete({
+      purpose: "compose_email",
+      model: "claude-sonnet-4-6",
+      maxTokens: 1500,
+      user: prompt,
     });
-
-    const data = await res.json();
-    let text = data.content?.[0]?.text || "{}";
+    let text = llmResult.text || "{}";
     text = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     const result = JSON.parse(text);
 
     return Response.json({ success: true, subject: result.subject, body: result.body });
-  } catch (e: any) {
-    return Response.json({ error: e.message || "Draft failed" }, { status: 500 });
+  } catch (e: unknown) {
+    if (e instanceof LlmGatewayError) {
+      console.error("[compose-email] LLM gateway error:", e.errorCode, e.message);
+      return Response.json({ error: "Draft service unavailable" }, { status: 502 });
+    }
+    return Response.json({ error: e instanceof Error ? e.message : "Draft failed" }, { status: 500 });
   }
 }

@@ -82,6 +82,14 @@ function flattenSystem(
   return system.text;
 }
 
+/** Flatten user/messages into a single string for cache key derivation. */
+function flattenUserContent(params: LlmCompleteParams): string {
+  if (params.messages && params.messages.length > 0) {
+    return params.messages.map((m) => `${m.role}: ${m.content}`).join("\n\n");
+  }
+  return params.user ?? "";
+}
+
 export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -101,6 +109,14 @@ export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
     params.humanEquivalentSeconds,
   );
 
+  // Validate input shape - either user or messages must be present.
+  if (!params.user && (!params.messages || params.messages.length === 0)) {
+    throw new LlmGatewayError(
+      "Either `user` or non-empty `messages` must be provided",
+      "missing_input",
+    );
+  }
+
   // Cache key (only if caller opted in)
   const cacheKey = params.cacheKey
     ? computeCacheKey({
@@ -108,7 +124,7 @@ export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
         provider,
         model,
         system: flattenSystem(params.system),
-        user: params.user,
+        user: flattenUserContent(params),
         maxTokens,
         temperature: params.temperature,
       })
@@ -164,6 +180,7 @@ export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
       model,
       system: params.system,
       user: params.user,
+      messages: params.messages,
       maxTokens,
       temperature: params.temperature,
     });
@@ -259,5 +276,5 @@ export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
   }
 }
 
-export type { LlmCompleteParams, LlmResult, SystemSegment, LlmModel } from "./types";
+export type { LlmCompleteParams, LlmResult, SystemSegment, LlmModel, LlmMessage } from "./types";
 export { LlmGatewayError } from "./types";

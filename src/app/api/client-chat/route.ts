@@ -1,7 +1,6 @@
 import { supabase } from "@/services/base";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
+import { complete as llmComplete, LlmGatewayError, type LlmMessage } from "@/lib/llm-gateway";
 
 export async function POST(req: Request) {
   if (!(await checkRateLimit(getClientIp(req)))) {
@@ -91,28 +90,25 @@ ${notesSummary}`;
 
   messages.push({ role: "user", content: message });
 
+  let reply: string;
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1500,
-        system: systemPrompt,
-        messages,
-      }),
+    const llmResult = await llmComplete({
+      purpose: "client_chat",
+      model: "claude-sonnet-4-6",
+      maxTokens: 1500,
+      system: systemPrompt,
+      messages: messages as LlmMessage[],
     });
-
-    if (!res.ok) {
-      return Response.json({ error: `Claude error: ${res.status}` }, { status: 502 });
+    reply = llmResult.text || "No response";
+  } catch (e: unknown) {
+    if (e instanceof LlmGatewayError) {
+      console.error("[client-chat] LLM gateway error:", e.errorCode, e.message);
+      return Response.json({ error: "Chat service unavailable" }, { status: 502 });
     }
+    throw e;
+  }
 
-    const data = await res.json();
-    const reply = data.content?.[0]?.text || "No response";
+  try {
 
     // Auto-save user messages that contain account intel as notes
     const intelPatterns = /they use|they are|we met|spoke to|confirmed|their provider|they told|they said|contract|switched|renewal|meeting|call with|using|forwarder|competitor|switched to|currently with|just found out|update/i;
@@ -126,19 +122,11 @@ ${notesSummary}`;
       // Update client_research with new intel from the conversation
       // Ask Claude to extract structured updates
       try {
-        const extractRes = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "x-api-key": ANTHROPIC_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "claude-sonnet-4-6",
-            max_tokens: 500,
-            messages: [{
-              role: "user",
-              content: `The user just told us this about client ${account_code}: "${message}"
+        const extractResult = await llmComplete({
+          purpose: "client_chat_extract",
+          model: "claude-sonnet-4-6",
+          maxTokens: 500,
+          user: `The user just told us this about client ${account_code}: "${message}"
 
 Current research data:
 - News: ${research?.client_news || ""}
@@ -146,14 +134,11 @@ Current research data:
 - Recommended action: ${research?.recommended_action || ""}
 
 Should we update the client research record? Return a JSON object with ONLY the fields that should change. Possible fields: client_news, competitor_intel, recommended_action, account_health (growing/stable/at_risk), insight (strategic notes about the account), ff_networks (array of freight network names e.g. ["WCA", "FIATA", "JC Trans"]). If nothing needs updating, return {}.
-Return JSON only, no explanation.`
-            }],
-          }),
+Return JSON only, no explanation.`,
         });
 
-        if (extractRes.ok) {
-          const extractData = await extractRes.json();
-          let updateText = extractData.content?.[0]?.text || "{}";
+        {
+          let updateText = extractResult.text || "{}";
           updateText = updateText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
           const rawUpdates = JSON.parse(updateText);
 

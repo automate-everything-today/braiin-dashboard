@@ -1,8 +1,7 @@
 import { supabase } from "@/services/base";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { CUSTOMER } from "@/config/customer";
-
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
+import { complete as llmComplete, LlmGatewayError } from "@/lib/llm-gateway";
 
 export async function POST(req: Request) {
   if (!(await checkRateLimit(getClientIp(req)))) {
@@ -117,23 +116,23 @@ RULES:
 - If the user asks about something not in the context, suggest where to find it.`;
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
+    let llmResult;
+    try {
+      llmResult = await llmComplete({
+        purpose: "braiin_chat",
         model: "claude-sonnet-4-6",
-        max_tokens: 600,
+        maxTokens: 600,
         system: systemPrompt,
-        messages: [{ role: "user", content: question }],
-      }),
-    });
-
-    const data = await res.json();
-    const answer = data.content?.[0]?.text || "Sorry, I could not process that question.";
+        user: question,
+      });
+    } catch (e: unknown) {
+      if (e instanceof LlmGatewayError) {
+        console.error("[braiin-chat] LLM gateway error:", e.errorCode, e.message);
+        return Response.json({ error: "Chat service unavailable" }, { status: 502 });
+      }
+      throw e;
+    }
+    const answer = llmResult.text || "Sorry, I could not process that question.";
 
     // Determine suggested actions based on the question and context
     const actions: { id: string; label: string; icon: string }[] = [];

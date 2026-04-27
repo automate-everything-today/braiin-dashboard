@@ -1,8 +1,8 @@
 import { supabase } from "@/services/base";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { complete as llmComplete, LlmGatewayError } from "@/lib/llm-gateway";
 
 const PERPLEXITY_KEY = process.env.PERPLEXITY_API_KEY || "";
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
 
 export async function POST(req: Request) {
   if (!(await checkRateLimit(getClientIp(req)))) {
@@ -79,20 +79,13 @@ PERPLEXITY RESEARCH:
 ${researchContent}`;
 
   try {
-    const cRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6", max_tokens: 1500,
-        messages: [{ role: "user", content: prompt }],
-      }),
+    const llmResult = await llmComplete({
+      purpose: "client_reresearch",
+      model: "claude-sonnet-4-6",
+      maxTokens: 1500,
+      user: prompt,
     });
-
-    const cData = await cRes.json();
-    let text = cData.content?.[0]?.text || "{}";
+    let text = llmResult.text || "{}";
     text = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     const analysis = JSON.parse(text);
 

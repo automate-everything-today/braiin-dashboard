@@ -32,6 +32,12 @@ export type SystemSegment =
   | string
   | { text: string; cacheControl?: "ephemeral" };
 
+/** A single conversation turn for multi-turn calls. */
+export interface LlmMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface LlmCompleteParams {
   /**
    * App-defined tag identifying *why* the call was made. Used
@@ -43,8 +49,19 @@ export interface LlmCompleteParams {
   /** System prompt(s). Single string or array of segments. */
   system?: SystemSegment | SystemSegment[];
 
-  /** User message content. */
-  user: string;
+  /**
+   * Single-shot user message. Use this for the common case where
+   * you have one prompt and want one response. Mutually exclusive
+   * with `messages`.
+   */
+  user?: string;
+
+  /**
+   * Multi-turn message array for chat / conversational features
+   * (deal-workspace, client-chat, etc). Order matters - oldest
+   * first. Mutually exclusive with `user`.
+   */
+  messages?: LlmMessage[];
 
   /** Model. Defaults to claude-sonnet-4-6. */
   model?: LlmModel;

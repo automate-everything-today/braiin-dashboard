@@ -1,7 +1,6 @@
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { CUSTOMER } from "@/config/customer";
-
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
+import { complete as llmComplete, LlmGatewayError } from "@/lib/llm-gateway";
 
 export async function POST(req: Request) {
   if (!(await checkRateLimit(getClientIp(req)))) {
@@ -11,10 +10,6 @@ export async function POST(req: Request) {
   const { tag, emails, userContext } = await req.json();
   if (!tag || !emails?.length) {
     return Response.json({ error: "Need tag and emails" }, { status: 400 });
-  }
-
-  if (!ANTHROPIC_KEY) {
-    return Response.json({ error: "AI not configured" }, { status: 500 });
   }
 
   // Build the email thread for Claude
@@ -54,26 +49,21 @@ ${emails.length > 3 ? "6. **Risks/Issues** - Any problems, delays, or concerns f
 Write in British English. Be direct and factual. Use standard hyphens (-) only. Do not use markdown headers - use the numbered format above with bold labels.`;
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1200,
-        messages: [{ role: "user", content: prompt }],
-      }),
+    const llmResult = await llmComplete({
+      purpose: "tag_summary",
+      model: "claude-sonnet-4-6",
+      maxTokens: 1200,
+      user: prompt,
     });
-
-    const data = await res.json();
-    const summary = data.content?.[0]?.text || "Unable to generate summary";
+    const summary = llmResult.text || "Unable to generate summary";
 
     return Response.json({ summary, emailCount: emails.length, tag });
-  } catch (err: any) {
-    console.error("[tag-summary] Failed:", err.message);
-    return Response.json({ error: err.message }, { status: 500 });
+  } catch (err: unknown) {
+    if (err instanceof LlmGatewayError) {
+      console.error("[tag-summary] LLM gateway error:", err.errorCode, err.message);
+      return Response.json({ error: "Summary service unavailable" }, { status: 502 });
+    }
+    console.error("[tag-summary] Failed:", err instanceof Error ? err.message : err);
+    return Response.json({ error: err instanceof Error ? err.message : "failed" }, { status: 500 });
   }
 }

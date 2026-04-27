@@ -10,7 +10,8 @@ import {
   getUserMode,
 } from "@/lib/reply-rules";
 
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
+import { complete as llmComplete, LlmGatewayError } from "@/lib/llm-gateway";
+
 const MODEL = "claude-sonnet-4-6"; // Sonnet for reply drafting, not Haiku - tone matters
 const BODY_MAX_CHARS = 4000;
 
@@ -136,36 +137,25 @@ ${instruction}
 
 Rewrite the 3 reply drafts per the new instruction, while staying consistent with the reply rules above.`;
 
+  let llmResult;
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1200,
-        system: [
-          {
-            type: "text",
-            text: SYSTEM_PROMPT,
-            cache_control: { type: "ephemeral" },
-          },
-        ],
-        messages: [{ role: "user", content: userMessage }],
-      }),
+    llmResult = await llmComplete({
+      purpose: "refine_replies",
+      model: MODEL,
+      maxTokens: 1200,
+      system: { text: SYSTEM_PROMPT, cacheControl: "ephemeral" },
+      user: userMessage,
     });
-
-    if (!res.ok) {
-      const errBody = await res.text();
-      console.error("[refine-replies] Anthropic API error:", res.status, errBody);
+  } catch (e: unknown) {
+    if (e instanceof LlmGatewayError) {
+      console.error("[refine-replies] LLM gateway error:", e.errorCode, e.message);
       return Response.json({ error: "Refinement service unavailable" }, { status: 502 });
     }
+    throw e;
+  }
 
-    const data = await res.json();
-    let text = data.content?.[0]?.text || "{}";
+  try {
+    let text = llmResult.text || "{}";
     text = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     const parsed = JSON.parse(text);
     const newReplies = Array.isArray(parsed.reply_options) ? parsed.reply_options : [];

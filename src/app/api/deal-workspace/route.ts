@@ -1,7 +1,6 @@
 import { supabase } from "@/services/base";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
-
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
+import { complete as llmComplete, LlmGatewayError, type LlmMessage } from "@/lib/llm-gateway";
 
 export async function POST(req: Request) {
   if (!(await checkRateLimit(getClientIp(req)))) {
@@ -128,8 +127,8 @@ ${notes.length > 0 ? `TEAM NOTES:\n${notes.map(n => `- ${n}`).join("\n")}` : ""}
 
 ${contacts.length > 0 ? `CONTACTS ON FILE:\n${contacts.map((c: any) => `- ${c.contact_name}${c.job_title ? ` (${c.job_title})` : ""}${c.email ? ` - ${c.email}` : ""}${c.phone ? ` - ${c.phone}` : ""}`).join("\n")}` : ""}`;
 
-  // Build messages
-  const messages: any[] = [];
+  // Build messages array - last 15 turns of history plus the new user message
+  const messages: LlmMessage[] = [];
   if (history && Array.isArray(history)) {
     for (const h of history.slice(-15)) {
       messages.push({ role: h.role === "user" ? "user" : "assistant", content: h.content });
@@ -137,24 +136,24 @@ ${contacts.length > 0 ? `CONTACTS ON FILE:\n${contacts.map((c: any) => `- ${c.co
   }
   messages.push({ role: "user", content: message });
 
+  let reply: string;
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1500,
-        system: systemPrompt,
-        messages,
-      }),
+    const llmResult = await llmComplete({
+      purpose: "deal_workspace",
+      model: "claude-sonnet-4-6",
+      maxTokens: 1500,
+      system: systemPrompt,
+      messages,
     });
-
-    const data = await res.json();
-    const reply = data.content?.[0]?.text || "I couldn't process that. Try again.";
+    reply = llmResult.text || "I couldn't process that. Try again.";
+  } catch (e: unknown) {
+    if (e instanceof LlmGatewayError) {
+      console.error("[deal-workspace] LLM gateway error:", e.errorCode, e.message);
+      return Response.json({ error: "Workspace AI unavailable" }, { status: 502 });
+    }
+    throw e;
+  }
+  try {
 
     // Save AI response to thread
     await supabase.from("deal_messages").insert({

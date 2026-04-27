@@ -9,7 +9,7 @@
  * all 14 existing call sites are migrated).
  */
 
-import { LlmGatewayError, type SystemSegment } from "../types";
+import { LlmGatewayError, type LlmMessage, type SystemSegment } from "../types";
 
 const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
@@ -59,7 +59,9 @@ export interface AnthropicCallInput {
   apiKey: string;
   model: string;
   system: SystemSegment | SystemSegment[] | undefined;
-  user: string;
+  /** Pass exactly one of these: */
+  user?: string;
+  messages?: LlmMessage[];
   maxTokens: number;
   temperature?: number;
 }
@@ -79,12 +81,17 @@ export interface AnthropicCallResult {
  * activity.llm_calls.
  */
 export async function callAnthropic(input: AnthropicCallInput): Promise<AnthropicCallResult> {
+  const messages =
+    input.messages && input.messages.length > 0
+      ? input.messages
+      : [{ role: "user" as const, content: input.user ?? "" }];
+
   const body = {
     model: input.model,
     max_tokens: input.maxTokens,
     ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
     ...(buildSystemArray(input.system) ? { system: buildSystemArray(input.system) } : {}),
-    messages: [{ role: "user" as const, content: input.user }],
+    messages,
   };
 
   let res: Response;

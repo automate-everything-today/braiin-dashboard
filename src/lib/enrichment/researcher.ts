@@ -1,8 +1,8 @@
 import { ALL_SERVICES, MODES } from "./taxonomy";
 import { CUSTOMER } from "@/config/customer";
+import { complete as llmComplete, LlmGatewayError } from "@/lib/llm-gateway";
 
 const PERPLEXITY_KEY = process.env.PERPLEXITY_API_KEY || "";
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
 const HUNTER_KEY = process.env.HUNTER_API_KEY || "";
 
 export type ResearchResult = {
@@ -86,7 +86,7 @@ export async function researchCompany(
   domain: string,
   websiteText: string,
 ): Promise<ResearchResult | null> {
-  if (!PERPLEXITY_KEY || !ANTHROPIC_KEY) {
+  if (!PERPLEXITY_KEY || !process.env.ANTHROPIC_API_KEY) {
     console.error("[enrichment] Missing PERPLEXITY_API_KEY or ANTHROPIC_API_KEY");
     return null;
   }
@@ -119,26 +119,13 @@ export async function researchCompany(
   if (!rawResearch) return { description: "No research data available" };
 
   try {
-    const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 800,
-        messages: [{ role: "user", content: buildClaudePrompt(websiteText, rawResearch) }],
-      }),
-      signal: AbortSignal.timeout(30000),
+    const llmResult = await llmComplete({
+      purpose: "enrichment_research",
+      model: "claude-sonnet-4-6",
+      maxTokens: 800,
+      user: buildClaudePrompt(websiteText, rawResearch),
     });
-    if (!claudeRes.ok) {
-      console.error(`[enrichment] Claude returned ${claudeRes.status}`);
-      return { description: rawResearch.slice(0, 500) };
-    }
-    const claudeData = await claudeRes.json();
-    let text = claudeData.content?.[0]?.text || "{}";
+    let text = llmResult.text || "{}";
     text = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
 
     try {
@@ -147,6 +134,10 @@ export async function researchCompany(
       return { description: rawResearch.slice(0, 500) };
     }
   } catch (err) {
+    if (err instanceof LlmGatewayError) {
+      console.error("[enrichment] LLM gateway error:", err.errorCode, err.message);
+      return { description: rawResearch.slice(0, 500) };
+    }
     console.error("[enrichment] Claude fetch failed:", err);
     return { description: rawResearch.slice(0, 500) };
   }
