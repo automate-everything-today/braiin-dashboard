@@ -21,6 +21,7 @@
  * retries and amplifies any parser bug.
  */
 
+import { timingSafeEqual } from "node:crypto";
 import { supabase } from "@/services/base";
 import { TENANT_ZERO_ORG_ID } from "@/lib/activity/log-event";
 import { cargowiseAdapter } from "@/lib/tms/cargowise";
@@ -59,6 +60,13 @@ function tmsClient(): TmsClient {
   return (supabase as any).schema("tms") as TmsClient;
 }
 
+function safeEq(a: string, b: string): boolean {
+  // Constant-time string compare. Length leak is acceptable - the secret
+  // length is fixed and not derivable from the comparison alone.
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
 function checkAuth(req: Request): boolean {
   if (!WEBHOOK_SECRET) {
     console.error("[inbound/cargowise] INBOUND_WEBHOOK_SECRET not configured");
@@ -66,7 +74,9 @@ function checkAuth(req: Request): boolean {
   }
   const auth = req.headers.get("authorization");
   if (!auth) return false;
-  if (auth === `Bearer ${WEBHOOK_SECRET}`) return true;
+  if (auth.startsWith("Bearer ")) {
+    return safeEq(auth.slice("Bearer ".length), WEBHOOK_SECRET);
+  }
   // Allow Basic for symmetry with /api/inbound/email - some
   // integrations only support Basic on the target.
   if (auth.startsWith("Basic ")) {
@@ -74,7 +84,7 @@ function checkAuth(req: Request): boolean {
       const decoded = Buffer.from(auth.slice("Basic ".length).trim(), "base64").toString("utf8");
       const idx = decoded.indexOf(":");
       const password = idx >= 0 ? decoded.slice(idx + 1) : decoded;
-      return password === WEBHOOK_SECRET;
+      return safeEq(password, WEBHOOK_SECRET);
     } catch {
       return false;
     }

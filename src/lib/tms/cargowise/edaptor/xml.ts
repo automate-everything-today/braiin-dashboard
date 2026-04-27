@@ -23,6 +23,8 @@ const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@_",
   textNodeName: "#text",
+  // Hard-disable entity expansion - DoS hardening (see cargo-visibility/xml.ts).
+  processEntities: false,
   isArray: (name: string): boolean => {
     return (
       name === "DataTarget" ||

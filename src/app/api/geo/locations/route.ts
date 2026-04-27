@@ -48,7 +48,8 @@ export async function GET(req: Request) {
   const country = url.searchParams.get("country")?.trim() || "";
   const fn = url.searchParams.get("function")?.trim() || "";
   const limitRaw = url.searchParams.get("limit") || "";
-  const limit = limitRaw ? parseInt(limitRaw, 10) : 20;
+  const limitParsed = limitRaw ? parseInt(limitRaw, 10) : 20;
+  const limit = Math.min(Math.max(Number.isFinite(limitParsed) ? limitParsed : 20, 1), 100);
 
   if (country && !ISO2.test(country)) {
     return apiError("country must be a 2-letter ISO 3166 code", 400);

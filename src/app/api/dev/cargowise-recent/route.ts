@@ -17,6 +17,7 @@
 
 import { supabase } from "@/services/base";
 import { TENANT_ZERO_ORG_ID } from "@/lib/activity/log-event";
+import { getSession } from "@/lib/session";
 
 interface RecentEvent {
   event_id: string;
@@ -76,6 +77,15 @@ function tmsClient(): TmsClient {
 }
 
 export async function GET(req: Request) {
+  // Explicit session check - the global proxy is configured as
+  // src/proxy.ts which Next.js 16 does NOT auto-load (middleware must
+  // live at src/middleware.ts). Until that's renamed every "session
+  // protected" route MUST call getSession() itself.
+  const session = await getSession();
+  if (!session?.email) {
+    return Response.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
   const url = new URL(req.url);
   const limitParam = Number(url.searchParams.get("limit") ?? 50);
   const limit = Math.min(Math.max(Number.isFinite(limitParam) ? limitParam : 50, 1), 200);

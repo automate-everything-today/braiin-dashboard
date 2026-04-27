@@ -73,6 +73,9 @@ const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@_",
   textNodeName: "#text",
+  // Hard-disable entity expansion - protects against billion-laughs /
+  // recursive-entity DoS even if a future fast-xml-parser default flips.
+  processEntities: false,
   // Always treat these as arrays - simplifies downstream code.
   isArray: (name: string): boolean => {
     return (
