@@ -161,6 +161,15 @@ export interface LlmResult {
    * Zero on failures.
    */
   timeSavedSeconds: number;
+
+  /**
+   * Stable identifier for this AI decision. Always populated -
+   * if the caller did not pass `decisionId`, the gateway minted
+   * a fresh UUID for them. Use this when wiring confirm/reject/
+   * correct feedback affordances - feedback rows in
+   * `activity.llm_feedback` reference this id.
+   */
+  decisionId: string;
 }
 
 /** Result of a single provider call before caching/metering. */

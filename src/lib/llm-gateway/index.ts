@@ -21,6 +21,7 @@
  * key on the server. Calling from a browser context will throw.
  */
 
+import { randomUUID } from "node:crypto";
 import { computeCacheKey, readCache, writeCache } from "./cache";
 import { resolveTimeSavedSeconds } from "./human-equivalents";
 import { meter } from "./metering";
@@ -108,6 +109,11 @@ export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
     params.purpose,
     params.humanEquivalentSeconds,
   );
+  // Auto-mint decision_id if caller didn't supply one. Every LLM
+  // call leaves a stable identifier in activity.llm_calls so feedback
+  // (activity.llm_feedback) can be wired against it later. See engiine
+  // adoption RFC section 3.2.
+  const decisionId = params.decisionId ?? randomUUID();
 
   // Validate input shape - either user or messages must be present.
   if (!params.user && (!params.messages || params.messages.length === 0)) {
@@ -146,7 +152,7 @@ export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
         latencyMs: 0,
         cacheKey,
         cacheHit: true,
-        decisionId: params.decisionId ?? null,
+        decisionId,
         correlationEventId: params.correlationEventId ?? null,
         requestedBy,
         success: true,
@@ -167,6 +173,7 @@ export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
         callId,
         latencyMs: 0,
         timeSavedSeconds: timeSavedOnSuccess,
+        decisionId,
       };
     }
   }
@@ -242,6 +249,7 @@ export async function complete(params: LlmCompleteParams): Promise<LlmResult> {
       callId,
       latencyMs,
       timeSavedSeconds: timeSavedOnSuccess,
+      decisionId,
     };
   } catch (err) {
     const latencyMs = Date.now() - startedAt;
