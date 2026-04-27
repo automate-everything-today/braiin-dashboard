@@ -1,0 +1,19 @@
+name: LLM Gateway Guard
+
+# Block direct Anthropic Messages API calls outside src/lib/llm-gateway/.
+# Keeps every Braiin LLM call routed through the gateway so we keep
+# central token metering, time-saved tracking, content-hash caching,
+# and multi-provider readiness. See scripts/check-no-direct-anthropic.sh.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check no direct api.anthropic.com calls outside the gateway
+        run: bash scripts/check-no-direct-anthropic.sh
