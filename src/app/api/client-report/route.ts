@@ -1,7 +1,7 @@
 import { supabase } from "@/services/base";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { complete as llmComplete, LlmGatewayError } from "@/lib/llm-gateway";
 
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || "";
 const GAMMA_KEY = process.env.GAMMA_API_KEY || "";
 
 export async function POST(req: Request) {
@@ -96,20 +96,17 @@ Tone: professional, confident, data-driven. Use British English, standard hyphen
 
   let reportContent = "";
   try {
-    const cRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6", max_tokens: 3000,
-        messages: [{ role: "user", content: reportPrompt }],
-      }),
+    const llmResult = await llmComplete({
+      purpose: "client_report",
+      model: "claude-sonnet-4-6",
+      maxTokens: 3000,
+      user: reportPrompt,
     });
-    const cData = await cRes.json();
-    reportContent = cData.content?.[0]?.text || "";
-  } catch {
+    reportContent = llmResult.text || "";
+  } catch (err) {
+    if (err instanceof LlmGatewayError) {
+      console.error("[client-report] LLM gateway error:", err.errorCode, err.message);
+    }
     return Response.json({ error: "Report generation failed" }, { status: 502 });
   }
 
