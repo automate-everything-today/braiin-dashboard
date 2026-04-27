@@ -31,6 +31,11 @@ import {
   parseUniversalInterchange,
   type SubscriptionXmlInput,
 } from "./cargo-visibility/xml";
+import {
+  inferCarrierFromMawb,
+  inferCarrierFromMbol,
+  inferOwnerFromContainerNumber,
+} from "./carrier-lookup";
 
 const CV_SUBSCRIPTIONS_PATH = "/api/v1/cargo-tracking/subscriptions";
 
@@ -101,15 +106,35 @@ export const cargowiseAdapter: TmsAdapter = {
       containerNumbers: request.containerNumbers,
     };
 
+    // Auto-infer carrier when not supplied and the reference is a
+    // recognised SCAC / IATA prefix. This is the UX win on the
+    // smoke-test form - users only have to paste the ref.
+    if (!xmlInput.carrierCode || !xmlInput.carrierName) {
+      let inferred = null;
+      if (request.tmsRefType === "mbol") inferred = inferCarrierFromMbol(request.tmsRef);
+      else if (request.tmsRefType === "awb") inferred = inferCarrierFromMawb(request.tmsRef);
+      else if (request.tmsRefType === "container") inferred = inferOwnerFromContainerNumber(request.tmsRef);
+      if (inferred) {
+        xmlInput.carrierCode = xmlInput.carrierCode ?? inferred.code;
+        xmlInput.carrierName = xmlInput.carrierName ?? inferred.name;
+      }
+    }
+
     if (request.tmsRefType === "mbol") {
       xmlInput.mbolNumber = request.tmsRef;
     } else if (request.tmsRefType === "awb") {
       xmlInput.mawbNumber = request.tmsRef;
+    } else if (request.tmsRefType === "container") {
+      xmlInput.containerNumber = request.tmsRef;
+      // Container-keyed subscriptions imply ocean
+      if (!xmlInput.transportMode) xmlInput.transportMode = "SEA";
+    } else if (request.tmsRefType === "booking") {
+      xmlInput.carriersBookingReference = request.tmsRef;
     } else {
       throw new TmsAdapterError(
         "cargowise",
         "createSubscription",
-        `Cargo Visibility subscriptions support tmsRefType=mbol or awb, got "${request.tmsRefType}"`,
+        `Cargo Visibility subscriptions support tmsRefType=mbol|awb|container|booking, got "${request.tmsRefType}"`,
       );
     }
 

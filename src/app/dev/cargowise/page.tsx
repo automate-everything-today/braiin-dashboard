@@ -14,6 +14,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { RefreshCw } from "lucide-react";
+import {
+  inferCarrierFromMawb as inferAirline,
+  inferCarrierFromMbol as inferOceanCarrier,
+  inferOwnerFromContainerNumber as inferContainerOwner,
+} from "@/lib/tms/cargowise/carrier-lookup";
 
 interface RecentEvent {
   event_id: string;
@@ -96,12 +101,50 @@ export default function DevCargowisePage() {
   const [error, setError] = useState<string | null>(null);
 
   // subscribe form
+  type RefType = "mbol" | "awb" | "container" | "booking";
   const [tmsRef, setTmsRef] = useState("");
-  const [tmsRefType, setTmsRefType] = useState<"mbol" | "awb">("mbol");
+  const [tmsRefType, setTmsRefType] = useState<RefType>("mbol");
   const [carrierCode, setCarrierCode] = useState("");
+  const [carrierName, setCarrierName] = useState<string | null>(null);
   const [transportMode, setTransportMode] = useState<"SEA" | "AIR" | "">("SEA");
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState<string | null>(null);
+
+  // Auto-detect carrier from MBOL/MAWB/container prefix client-side.
+  // Tables are bundled with the page module; no API roundtrip.
+  useEffect(() => {
+    if (!tmsRef.trim()) {
+      setCarrierName(null);
+      return;
+    }
+    const cleaned = tmsRef.trim().toUpperCase();
+    let inferred: { code: string; name: string } | null = null;
+    if (tmsRefType === "mbol") {
+      inferred = inferOceanCarrier(cleaned);
+    } else if (tmsRefType === "awb") {
+      inferred = inferAirline(cleaned);
+    } else if (tmsRefType === "container") {
+      inferred = inferContainerOwner(cleaned);
+    }
+    if (inferred && !carrierCode) {
+      setCarrierCode(inferred.code);
+    }
+    setCarrierName(inferred?.name ?? null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tmsRef, tmsRefType]);
+
+  const refLabel: Record<RefType, string> = {
+    mbol: "Master Bill (MBOL)",
+    awb: "Master Air Waybill (MAWB)",
+    container: "Container number",
+    booking: "Booking ref (SI / SO / SE / PO)",
+  };
+  const refPlaceholder: Record<RefType, string> = {
+    mbol: "MAEU224278608",
+    awb: "020-12345678",
+    container: "TRHU1919450",
+    booking: "BKG-12345 / SI-9876",
+  };
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -254,30 +297,41 @@ export default function DevCargowisePage() {
                 <select
                   id="ref-type"
                   value={tmsRefType}
-                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setTmsRefType(e.target.value as "mbol" | "awb")}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+                    const v = e.target.value as RefType;
+                    setTmsRefType(v);
+                    // Sensible default mode per type
+                    if (v === "awb") setTransportMode("AIR");
+                    else if (v === "mbol" || v === "container") setTransportMode("SEA");
+                  }}
                   className="w-full h-9 rounded border border-zinc-300 px-2 text-sm"
                 >
                   <option value="mbol">MBOL</option>
-                  <option value="awb">AWB</option>
+                  <option value="awb">MAWB</option>
+                  <option value="container">Container</option>
+                  <option value="booking">Booking (SI/SO/SE/PO)</option>
                 </select>
               </div>
               <div className="md:col-span-2">
-                <label htmlFor="ref" className="text-xs text-zinc-700 block mb-1">Reference</label>
+                <label htmlFor="ref" className="text-xs text-zinc-700 block mb-1">{refLabel[tmsRefType]}</label>
                 <input
                   id="ref"
                   type="text"
-                  placeholder={tmsRefType === "mbol" ? "224278608" : "176-12345678"}
+                  placeholder={refPlaceholder[tmsRefType]}
                   value={tmsRef}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTmsRef(e.target.value)}
-                  className="w-full h-9 rounded border border-zinc-300 px-2 text-sm"
+                  className="w-full h-9 rounded border border-zinc-300 px-2 text-sm uppercase"
                 />
+                {carrierName && (
+                  <p className="text-[11px] text-emerald-700 mt-1">Detected: {carrierName}</p>
+                )}
               </div>
               <div>
                 <label htmlFor="carrier" className="text-xs text-zinc-700 block mb-1">Carrier (SCAC/IATA)</label>
                 <input
                   id="carrier"
                   type="text"
-                  placeholder="MAEU / BA"
+                  placeholder="auto"
                   value={carrierCode}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCarrierCode(e.target.value)}
                   className="w-full h-9 rounded border border-zinc-300 px-2 text-sm uppercase"

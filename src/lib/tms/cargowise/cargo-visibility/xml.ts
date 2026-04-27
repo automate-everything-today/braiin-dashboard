@@ -113,12 +113,17 @@ function deriveTmsRefType(eventType: string, ctx: ParsedContext[]): {
   refType: TmsRefType | null;
 } {
   // For ocean cargo subscriptions the MBOL is the primary handle.
-  // For air cargo it's the MAWB (Master Air Waybill). The CV API
-  // exposes these via specific Context types.
+  // For air cargo it's the MAWB. CarriersBookingReference covers the
+  // SI / SO / SE / PO mapping path. ContainerNumber lets us track
+  // container-keyed subscriptions.
   const mbol = pickContext(ctx, "MBOLNumber");
   if (mbol) return { ref: mbol, refType: "mbol" };
   const mawb = pickContext(ctx, "MAWBNumber");
   if (mawb) return { ref: mawb, refType: "awb" };
+  const booking = pickContext(ctx, "CarriersBookingReference");
+  if (booking) return { ref: booking, refType: "booking" };
+  const container = pickContext(ctx, "ContainerNumber");
+  if (container) return { ref: container, refType: "container" };
   const consignment = pickContext(ctx, "ConsignmentNumber");
   if (consignment) return { ref: consignment, refType: "consignment" };
   return { ref: null, refType: null };
@@ -219,9 +224,14 @@ export function parseUniversalInterchange(xml: string): TmsEvent[] {
 // ---------- outbound (subscription request builder) ----------
 
 export interface SubscriptionXmlInput {
-  // Primary reference - either MBOLNumber (ocean) or MAWBNumber (air)
+  // Primary reference - exactly one of these MUST be set per the
+  // CV API contract. CarrierBookingReference covers SI / SO / SE / PO
+  // refs that map to a single carrier-side booking ID.
   mbolNumber?: string;
   mawbNumber?: string;
+  carriersBookingReference?: string;
+  /** Container number primary key (ocean only) */
+  containerNumber?: string;
 
   carrierCode?: string;
   carrierName?: string;
@@ -245,7 +255,7 @@ export interface SubscriptionXmlInput {
   legOriginUnloco?: string;
   legDestinationUnloco?: string;
 
-  /** Optional container numbers (ocean) */
+  /** Optional container numbers (ocean, plural). Use containerNumber above for primary. */
   containerNumbers?: string[];
 }
 
@@ -272,6 +282,12 @@ export function buildSubscriptionXml(input: SubscriptionXmlInput): string {
   }
   if (input.mawbNumber) {
     ctx.push({ Type: "MAWBNumber", Value: input.mawbNumber });
+  }
+  if (input.carriersBookingReference) {
+    ctx.push({ Type: "CarriersBookingReference", Value: input.carriersBookingReference });
+  }
+  if (input.containerNumber) {
+    ctx.push({ Type: "ContainerNumber", Value: input.containerNumber });
   }
   if (input.mbolOriginUnloco) {
     ctx.push({ Type: "MBOLOriginUNLOCO", Value: input.mbolOriginUnloco });

@@ -25,7 +25,7 @@ import { checkRateLimit } from "@/lib/rate-limit";
 import { cargowiseAdapter } from "@/lib/tms/cargowise";
 import type { TmsConnection, TmsSubscriptionRequest } from "@/lib/tms/types";
 
-const VALID_REF_TYPES = new Set(["mbol", "awb"]);
+const VALID_REF_TYPES = new Set(["mbol", "awb", "container", "booking"]);
 const VALID_TRANSPORT = new Set(["SEA", "AIR"]);
 const VALID_CONTAINER = new Set(["FCL", "LCL"]);
 
@@ -88,7 +88,9 @@ export async function POST(req: Request) {
   const tmsRef = typeof body.tmsRef === "string" ? body.tmsRef.trim() : "";
   const tmsRefType = typeof body.tmsRefType === "string" ? body.tmsRefType.trim() : "";
   if (!tmsRef) return apiError("tmsRef is required", 400);
-  if (!VALID_REF_TYPES.has(tmsRefType)) return apiError("tmsRefType must be 'mbol' or 'awb'", 400);
+  if (!VALID_REF_TYPES.has(tmsRefType)) {
+    return apiError("tmsRefType must be one of: mbol, awb, container, booking", 400);
+  }
 
   const carrierCode = typeof body.carrierCode === "string" ? body.carrierCode.trim().toUpperCase() : undefined;
   const transportMode = typeof body.transportMode === "string" ? body.transportMode.trim().toUpperCase() : undefined;

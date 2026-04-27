@@ -19,7 +19,10 @@ export type TmsRefType =
   | "shipment"
   | "mbol"           // master bill of lading
   | "hbol"           // house bill of lading
-  | "awb"            // air waybill
+  | "awb"            // air waybill (master)
+  | "hawb"           // house air waybill
+  | "container"      // container number (e.g. TRHU1919450)
+  | "booking"        // carrier's booking reference (covers SI / SO / SE / PO refs)
   | "consignment"
   | "invoice"
   | "document";
