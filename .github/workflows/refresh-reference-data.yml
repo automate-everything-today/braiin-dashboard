@@ -1,0 +1,43 @@
+name: Refresh reference data (annual)
+
+# Annual refresh of the long-tail reference datasets that change rarely
+# but matter for accuracy: ISO 4217 currencies, WCO HS commodity codes,
+# and IATA / ICAO airline carriers.
+#
+# UN/LOCODE has its own 6-monthly workflow (refresh-unlocode.yml)
+# because UNECE releases that one twice yearly.
+#
+# Runs 1st of February at 03:30 UTC, plus manual workflow_dispatch.
+#
+# Repo secrets required:
+#   NEXT_PUBLIC_SUPABASE_URL
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY
+#   SUPABASE_SERVICE_KEY
+
+on:
+  schedule:
+    - cron: "30 3 1 2 *"
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - name: Install deps
+        run: npm ci --no-audit --no-fund
+      - name: ISO 4217 currencies
+        run: npm run import:currencies
+      - name: WCO HS codes
+        run: npm run import:hs-codes
+      - name: IATA / ICAO carriers
+        run: npm run import:iata
