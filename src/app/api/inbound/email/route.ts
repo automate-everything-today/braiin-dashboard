@@ -15,7 +15,12 @@
  *   3. Message-ID / In-Reply-To header threading
  *   4. Fuzzy fallback - logged as orphan_inbound for human review
  *
- * Auth: shared secret in `Authorization: Bearer <INBOUND_WEBHOOK_SECRET>`.
+ * Auth: shared secret accepted as either
+ *   `Authorization: Bearer <INBOUND_WEBHOOK_SECRET>` or
+ *   `Authorization: Basic <base64("braiin:<INBOUND_WEBHOOK_SECRET>")>`.
+ * Basic exists because CloudMailin Free only supports HTTP Basic on
+ * the target; Bearer stays for any future inbound source that supports
+ * custom headers (Resend Inbound, SendGrid Inbound Parse, Mailgun Routes).
  */
 
 import { supabase } from "@/services/base";
@@ -210,7 +215,9 @@ export async function POST(req: Request) {
   }
 
   const auth = req.headers.get("authorization") ?? "";
-  if (auth !== `Bearer ${WEBHOOK_SECRET}`) {
+  const expectedBearer = `Bearer ${WEBHOOK_SECRET}`;
+  const expectedBasic = `Basic ${Buffer.from(`braiin:${WEBHOOK_SECRET}`).toString("base64")}`;
+  if (auth !== expectedBearer && auth !== expectedBasic) {
     console.warn("[inbound/email] rejected: bad auth");
     return Response.json({ error: "Unauthorised" }, { status: 401 });
   }
