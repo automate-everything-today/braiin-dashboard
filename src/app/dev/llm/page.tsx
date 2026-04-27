@@ -34,7 +34,15 @@ interface LlmCall {
   time_saved_seconds: number;
 }
 
-const HOURLY_RATE_GBP = 25; // rough freight-ops fully-loaded hourly cost - for ROI display
+interface RoiConfig {
+  hourlyRateGbp: number;
+  basis: "live_staff_avg" | "fallback";
+  staffCount: number;
+  totalAnnualCostGbp: number;
+  totalHoursPerYear: number;
+}
+
+const FALLBACK_HOURLY_RATE_GBP = 25; // used until /api/dev/llm-recent returns a live rate
 
 function fmtDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -157,6 +165,7 @@ function aggregateBy(rows: LlmCall[], pick: (r: LlmCall) => string): ByGroupRow[
 
 export default function DevLlmPage() {
   const [calls, setCalls] = useState<LlmCall[]>([]);
+  const [roi, setRoi] = useState<RoiConfig | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
@@ -166,12 +175,13 @@ export default function DevLlmPage() {
     setError(null);
     try {
       const r = await fetch("/api/dev/llm-recent?limit=500");
-      const d = (await r.json()) as { calls?: LlmCall[]; error?: string };
+      const d = (await r.json()) as { calls?: LlmCall[]; roi?: RoiConfig; error?: string };
       if (!r.ok) {
         setError(d.error ?? `HTTP ${r.status}`);
         return;
       }
       setCalls(d.calls ?? []);
+      if (d.roi) setRoi(d.roi);
       setLastRefresh(new Date());
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Unknown fetch error");
@@ -217,6 +227,29 @@ export default function DevLlmPage() {
           </Button>
         </div>
 
+        {roi && (
+          <div className="mb-6 text-xs text-zinc-500 bg-zinc-50 border border-zinc-200 rounded px-3 py-2">
+            ROI valued at{" "}
+            <span className="font-mono font-semibold text-zinc-700">
+              £{roi.hourlyRateGbp.toFixed(2)}/hr
+            </span>{" "}
+            -{" "}
+            {roi.basis === "live_staff_avg" ? (
+              <>
+                blended fully-loaded hourly cost across {roi.staffCount} active staff
+                (£{(roi.totalAnnualCostGbp / 1000).toFixed(0)}k annual /{" "}
+                {Math.round(roi.totalHoursPerYear).toLocaleString()} working hours).
+                Live from <code className="bg-zinc-100 px-1 py-0.5 rounded">public.staff</code>.
+              </>
+            ) : (
+              <>
+                fallback (staff query failed or empty). Add staff records or check service-role
+                permissions to compute the live blended rate.
+              </>
+            )}
+          </div>
+        )}
+
         {/* Period summary cards - cost + time-saved + ROI */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           {(
@@ -226,9 +259,10 @@ export default function DevLlmPage() {
               { label: "This month", b: month },
             ] as const
           ).map(({ label, b }) => {
-            const valueGbp = (b.timeSavedSeconds / 3600) * HOURLY_RATE_GBP;
+            const hourlyRate = roi?.hourlyRateGbp ?? FALLBACK_HOURLY_RATE_GBP;
+            const valueGbp = (b.timeSavedSeconds / 3600) * hourlyRate;
             const costGbp = b.costCents / 100; // treat cents as pence; close enough for ROI display
-            const roi = costGbp > 0 ? valueGbp / costGbp : null;
+            const roiMultiple = costGbp > 0 ? valueGbp / costGbp : null;
             return (
               <Card key={label}>
                 <CardHeader className="pb-2">
@@ -249,13 +283,13 @@ export default function DevLlmPage() {
                       <div className="text-2xl font-bold">{fmtCents(b.costCents)}</div>
                     </div>
                   </div>
-                  {roi !== null && b.timeSavedSeconds > 0 && (
+                  {roiMultiple !== null && b.timeSavedSeconds > 0 && (
                     <div className="mt-3 pt-3 border-t text-xs text-zinc-600">
                       <span className="font-semibold text-emerald-700">
-                        {roi.toFixed(0)}x ROI
+                        {roiMultiple.toFixed(0)}x ROI
                       </span>{" "}
                       <span className="text-zinc-400">
-                        (≈£{valueGbp.toFixed(2)} of human time at £{HOURLY_RATE_GBP}/hr)
+                        (≈£{valueGbp.toFixed(2)} of human time at £{hourlyRate.toFixed(2)}/hr)
                       </span>
                     </div>
                   )}
