@@ -17,6 +17,7 @@ import { RefreshCw } from "lucide-react";
 
 interface LlmCall {
   call_id: string;
+  decision_id: string | null;
   requested_at: string;
   provider: string;
   model: string;
@@ -32,6 +33,17 @@ interface LlmCall {
   error_code: string | null;
   error_message: string | null;
   time_saved_seconds: number;
+}
+
+type FeedbackType = "confirm" | "reject" | "correct" | "flag";
+
+interface FeedbackRow {
+  feedback_id: string;
+  decision_id: string;
+  feedback_type: FeedbackType;
+  note: string | null;
+  submitted_by: string;
+  submitted_at: string;
 }
 
 interface RoiConfig {
@@ -165,22 +177,30 @@ function aggregateBy(rows: LlmCall[], pick: (r: LlmCall) => string): ByGroupRow[
 
 export default function DevLlmPage() {
   const [calls, setCalls] = useState<LlmCall[]>([]);
+  const [feedback, setFeedback] = useState<FeedbackRow[]>([]);
   const [roi, setRoi] = useState<RoiConfig | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [submittingDecisionId, setSubmittingDecisionId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const r = await fetch("/api/dev/llm-recent?limit=500");
-      const d = (await r.json()) as { calls?: LlmCall[]; roi?: RoiConfig; error?: string };
+      const d = (await r.json()) as {
+        calls?: LlmCall[];
+        roi?: RoiConfig;
+        feedback?: FeedbackRow[];
+        error?: string;
+      };
       if (!r.ok) {
         setError(d.error ?? `HTTP ${r.status}`);
         return;
       }
       setCalls(d.calls ?? []);
+      setFeedback(d.feedback ?? []);
       if (d.roi) setRoi(d.roi);
       setLastRefresh(new Date());
     } catch (e: unknown) {
@@ -189,6 +209,59 @@ export default function DevLlmPage() {
       setLoading(false);
     }
   }, []);
+
+  /**
+   * Build a `decision_id -> latest feedback` lookup so each row in
+   * the recent-calls table can show its current verdict without
+   * scanning the feedback array per render.
+   */
+  const latestFeedbackByDecision = useMemo(() => {
+    const map = new Map<string, FeedbackRow>();
+    // feedback array is already sorted submitted_at DESC by the API,
+    // so the first occurrence per decision_id is the latest.
+    for (const f of feedback) {
+      if (!map.has(f.decision_id)) map.set(f.decision_id, f);
+    }
+    return map;
+  }, [feedback]);
+
+  const submitFeedback = useCallback(
+    async (decisionId: string, type: FeedbackType, note?: string) => {
+      setSubmittingDecisionId(decisionId);
+      // Optimistic update so the verdict badge flips instantly.
+      const optimistic: FeedbackRow = {
+        feedback_id: `optimistic-${Date.now()}`,
+        decision_id: decisionId,
+        feedback_type: type,
+        note: note ?? null,
+        submitted_by: "you (saving...)",
+        submitted_at: new Date().toISOString(),
+      };
+      setFeedback((prev) => [optimistic, ...prev]);
+      try {
+        const r = await fetch(`/api/decisions/${decisionId}/feedback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type, note }),
+        });
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error(d.error ?? `HTTP ${r.status}`);
+        }
+        // Re-pull authoritative state.
+        await refresh();
+      } catch (e: unknown) {
+        setError(
+          `Feedback failed: ${e instanceof Error ? e.message : "unknown error"}`,
+        );
+        // Roll back the optimistic insert.
+        setFeedback((prev) => prev.filter((f) => f.feedback_id !== optimistic.feedback_id));
+      } finally {
+        setSubmittingDecisionId(null);
+      }
+    },
+    [refresh],
+  );
 
   useEffect(() => {
     refresh();
@@ -418,12 +491,13 @@ export default function DevLlmPage() {
                   <TableHead className="text-right">Cost</TableHead>
                   <TableHead className="text-right">ms</TableHead>
                   <TableHead className="w-[80px]">Status</TableHead>
+                  <TableHead className="w-[180px] text-center">Verdict</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {calls.length === 0 && !loading && (
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center text-zinc-400 py-12 text-xs">
+                    <TableCell colSpan={10} className="text-center text-zinc-400 py-12 text-xs">
                       No calls yet. Trigger a feature that calls the LLM gateway (classify-email,
                       research, deal-coach, etc.) to populate.
                     </TableCell>
@@ -435,6 +509,10 @@ export default function DevLlmPage() {
                     : c.cache_hit
                     ? "bg-green-50 hover:bg-green-100"
                     : "";
+                  const verdict = c.decision_id
+                    ? latestFeedbackByDecision.get(c.decision_id) ?? null
+                    : null;
+                  const submitting = submittingDecisionId === c.decision_id;
                   return (
                     <TableRow key={c.call_id} className={rowCls}>
                       <TableCell className="text-xs whitespace-nowrap align-top">
@@ -480,6 +558,65 @@ export default function DevLlmPage() {
                           </Badge>
                         )}
                       </TableCell>
+                      <TableCell className="align-top text-center">
+                        {!c.decision_id ? (
+                          <span className="text-xs text-zinc-300">-</span>
+                        ) : verdict ? (
+                          <Badge
+                            variant="secondary"
+                            className={
+                              verdict.feedback_type === "confirm"
+                                ? "text-xs bg-emerald-100 text-emerald-800"
+                                : verdict.feedback_type === "reject"
+                                ? "text-xs bg-rose-100 text-rose-800"
+                                : verdict.feedback_type === "correct"
+                                ? "text-xs bg-amber-100 text-amber-800"
+                                : "text-xs bg-zinc-200 text-zinc-700"
+                            }
+                            title={`${verdict.feedback_type} by ${verdict.submitted_by}${verdict.note ? ` - ${verdict.note}` : ""}`}
+                          >
+                            {verdict.feedback_type}
+                          </Badge>
+                        ) : (
+                          <div className="flex gap-1 justify-center">
+                            <button
+                              type="button"
+                              disabled={submitting}
+                              onClick={() => submitFeedback(c.decision_id!, "confirm")}
+                              className="px-1.5 py-0.5 text-xs rounded border border-emerald-200 hover:bg-emerald-50 disabled:opacity-40"
+                              title="Confirm: this output was right"
+                            >
+                              👍
+                            </button>
+                            <button
+                              type="button"
+                              disabled={submitting}
+                              onClick={() => {
+                                const note = window.prompt("Why was this wrong? (optional)");
+                                if (note === null) return; // user cancelled
+                                submitFeedback(c.decision_id!, "reject", note || undefined);
+                              }}
+                              className="px-1.5 py-0.5 text-xs rounded border border-rose-200 hover:bg-rose-50 disabled:opacity-40"
+                              title="Reject: this output was wrong"
+                            >
+                              👎
+                            </button>
+                            <button
+                              type="button"
+                              disabled={submitting}
+                              onClick={() => {
+                                const note = window.prompt("What needs review? (optional)");
+                                if (note === null) return;
+                                submitFeedback(c.decision_id!, "flag", note || undefined);
+                              }}
+                              className="px-1.5 py-0.5 text-xs rounded border border-zinc-200 hover:bg-zinc-50 disabled:opacity-40"
+                              title="Flag: needs review"
+                            >
+                              🚩
+                            </button>
+                          </div>
+                        )}
+                      </TableCell>
                     </TableRow>
                   );
                 })}
@@ -487,6 +624,65 @@ export default function DevLlmPage() {
             </Table>
           </CardContent>
         </Card>
+
+        {feedback.length > 0 && (
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle className="text-sm">
+                Recent feedback{" "}
+                <span className="text-xs font-normal text-zinc-400 ml-2">
+                  ({feedback.length} events) - confirms train the model, rejects flag drift,
+                  corrections become gold-dataset fixtures
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[120px]">When</TableHead>
+                    <TableHead className="w-[100px]">Verdict</TableHead>
+                    <TableHead>Decision</TableHead>
+                    <TableHead>Note</TableHead>
+                    <TableHead>By</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {feedback.slice(0, 30).map((f) => (
+                    <TableRow key={f.feedback_id}>
+                      <TableCell className="text-xs whitespace-nowrap align-top">
+                        {new Date(f.submitted_at).toLocaleTimeString()}
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <Badge
+                          variant="secondary"
+                          className={
+                            f.feedback_type === "confirm"
+                              ? "text-xs bg-emerald-100 text-emerald-800"
+                              : f.feedback_type === "reject"
+                              ? "text-xs bg-rose-100 text-rose-800"
+                              : f.feedback_type === "correct"
+                              ? "text-xs bg-amber-100 text-amber-800"
+                              : "text-xs bg-zinc-200 text-zinc-700"
+                          }
+                        >
+                          {f.feedback_type}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs font-mono text-zinc-500 align-top">
+                        {f.decision_id.slice(0, 8)}…
+                      </TableCell>
+                      <TableCell className="text-xs align-top max-w-md truncate">
+                        {f.note ?? <span className="text-zinc-300">-</span>}
+                      </TableCell>
+                      <TableCell className="text-xs align-top">{f.submitted_by}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
 
         {lastRefresh && (
           <div className="text-xs text-zinc-400 mt-4 text-right">

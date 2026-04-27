@@ -159,16 +159,39 @@ export async function GET(req: Request) {
   const limitParam = Number(url.searchParams.get("limit") ?? 200);
   const limit = Math.min(Math.max(Number.isFinite(limitParam) ? limitParam : 200, 1), 1000);
 
-  const [{ data, error }, roiConfig] = await Promise.all([
+  const [{ data, error }, roiConfig, feedbackRes] = await Promise.all([
     activityClient()
       .from("llm_calls")
       .select(
-        "call_id,requested_at,provider,model,purpose,input_tokens,output_tokens,cached_input_tokens,cost_cents,latency_ms,cache_hit,success,requested_by,error_code,error_message,time_saved_seconds",
+        "call_id,decision_id,requested_at,provider,model,purpose,input_tokens,output_tokens,cached_input_tokens,cost_cents,latency_ms,cache_hit,success,requested_by,error_code,error_message,time_saved_seconds",
       )
       .eq("org_id", TENANT_ZERO_ORG_ID)
       .order("requested_at", { ascending: false })
       .limit(limit),
     computeBlendedHourlyRate(),
+    // Pull the most recent feedback rows so the dashboard can show
+    // a per-row verdict and a "recent feedback" feed. Limited to a
+    // generous window so quiet decisions still see their old verdict.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any)
+      .schema("activity")
+      .from("llm_feedback")
+      .select("feedback_id,decision_id,feedback_type,note,submitted_by,submitted_at")
+      .eq("org_id", TENANT_ZERO_ORG_ID)
+      .order("submitted_at", { ascending: false })
+      .limit(500) as Promise<{
+        data:
+          | {
+              feedback_id: string;
+              decision_id: string;
+              feedback_type: string;
+              note: string | null;
+              submitted_by: string;
+              submitted_at: string;
+            }[]
+          | null;
+        error: { message: string } | null;
+      }>,
   ]);
 
   if (error) {
@@ -176,5 +199,14 @@ export async function GET(req: Request) {
     return Response.json({ error: error.message }, { status: 500 });
   }
 
-  return Response.json({ calls: data ?? [], roi: roiConfig });
+  const feedback = feedbackRes.data ?? [];
+  if (feedbackRes.error) {
+    console.warn("[dev/llm-recent] feedback query failed:", feedbackRes.error.message);
+  }
+
+  return Response.json({
+    calls: data ?? [],
+    roi: roiConfig,
+    feedback,
+  });
 }
