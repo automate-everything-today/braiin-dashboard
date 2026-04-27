@@ -18,6 +18,7 @@ import {
 } from "@/lib/conversation-stages";
 import { findNetworkByEmail, describeNetworkForPrompt } from "@/lib/freight-networks";
 import { complete as llmComplete, LlmGatewayError } from "@/lib/llm-gateway";
+import { expandShorthand } from "@/lib/shorthand";
 
 const MODEL = "claude-haiku-4-5-20251001";
 const BODY_MAX_CHARS = 4000;
@@ -583,6 +584,21 @@ ${bodyText ? `\nBody:\n${bodyText}\n` : ""}
 
 Classify this email per the rules above and return JSON.`;
 
+  // Inline freight-shorthand expansion (engiine RFC 3.4). Replaces bare
+  // codes like "FXT" / "DDP" / "MAERSK" with "FXT (Felixstowe)" etc on
+  // first occurrence so the model has the unambiguous expansion alongside
+  // the jargon. Failures degrade to the raw message - we warn loudly but
+  // never block classification on vocab issues.
+  let promptForLlm = userMessage;
+  try {
+    promptForLlm = await expandShorthand(userMessage, { firstOnly: true });
+  } catch (err) {
+    console.warn(
+      "[classify-email/shorthand] expand failed, falling back to raw text:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   try {
     const llmResult = await llmComplete({
       purpose: "classify_email",
@@ -592,7 +608,7 @@ Classify this email per the rules above and return JSON.`;
       // ephemeral prompt cache. First call in a burst pays full price,
       // subsequent calls within 5 min pay ~10%.
       system: { text: CLASSIFIER_RULES, cacheControl: "ephemeral" },
-      user: userMessage,
+      user: promptForLlm,
       requestedBy: session?.email ?? "service_role",
     });
 

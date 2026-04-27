@@ -1,6 +1,7 @@
 import { supabase } from "@/services/base";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { complete as llmComplete, LlmGatewayError } from "@/lib/llm-gateway";
+import { expandShorthand } from "@/lib/shorthand";
 
 const PERPLEXITY_KEY = process.env.PERPLEXITY_API_KEY || "";
 
@@ -94,13 +95,28 @@ ${yetiSection}
 PERPLEXITY RESEARCH:
 ${researchContent}`;
 
+  // Inline freight-shorthand expansion (engiine RFC 3.4). Perplexity
+  // research, Import Yeti port codes, and free-form pain-point text often
+  // contain unexpanded shorthand (FXT, DDP, MSC). Expanding on first
+  // occurrence gives the analysis prompt the unambiguous canonical names
+  // alongside the codes.
+  let promptForLlm = analysisPrompt;
+  try {
+    promptForLlm = await expandShorthand(analysisPrompt, { firstOnly: true });
+  } catch (err) {
+    console.warn(
+      "[research/shorthand] expand failed, falling back to raw prompt:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   let analysis: any = null;
   try {
     const llmResult = await llmComplete({
       purpose: "research_analysis",
       model: "claude-sonnet-4-6",
       maxTokens: 2000,
-      user: analysisPrompt,
+      user: promptForLlm,
     });
     let text = llmResult.text || "";
     text = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
