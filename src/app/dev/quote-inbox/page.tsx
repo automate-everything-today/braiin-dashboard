@@ -31,6 +31,7 @@ import { PageGuard } from "@/components/page-guard";
 import {
   ArrowDownUp,
   ArrowRight,
+  Check,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -1416,10 +1417,23 @@ export default function QuoteInboxPage() {
     setExpanded((s) => ({ ...s, [id]: !s[id] }));
   }
 
+  // Larger, full-width action button. Lives in the leftmost column so it's
+  // the first thing the operator's eye lands on. Each status has a single
+  // primary CTA - no hidden options.
   function actionFor(row: InboxRow) {
+    const baseCls = "h-8 w-full justify-start text-xs font-medium";
     if (row.status === "new" || row.status === "gathering") {
       return (
-        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAskInfoRow(row)}>
+        <Button
+          size="sm"
+          variant="outline"
+          className={`${baseCls} border-amber-300 text-amber-900 hover:bg-amber-50`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setAskInfoRow(row);
+          }}
+        >
+          <Mail className="size-3.5 mr-1.5" />
           Ask for info
         </Button>
       );
@@ -1428,46 +1442,69 @@ export default function QuoteInboxPage() {
       return (
         <Button
           size="sm"
-          className="h-7 text-xs bg-orange-600 hover:bg-orange-700"
-          onClick={() => setProvideInputRow(row)}
+          className={`${baseCls} bg-orange-600 hover:bg-orange-700 text-white`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setProvideInputRow(row);
+          }}
         >
-          <HandHelping className="size-3 mr-1" />
+          <HandHelping className="size-3.5 mr-1.5" />
           Provide input
         </Button>
       );
     }
     if (row.status === "ready") {
       return (
-        <Button size="sm" className="h-7 text-xs" onClick={() => setSendRfqRow(row)}>
-          <Send className="size-3 mr-1" />
+        <Button
+          size="sm"
+          className={`${baseCls} bg-sky-600 hover:bg-sky-700 text-white`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setSendRfqRow(row);
+          }}
+        >
+          <Send className="size-3.5 mr-1.5" />
           Send RFQ
         </Button>
       );
     }
     if (row.status === "sourcing") {
       return (
-        <Button size="sm" variant="outline" className="h-7 text-xs">
+        <Button
+          size="sm"
+          variant="outline"
+          className={`${baseCls} border-violet-300 text-violet-900 hover:bg-violet-50`}
+        >
+          <Layers className="size-3.5 mr-1.5" />
           View grid
         </Button>
       );
     }
     if (row.status === "recommended") {
       return (
-        <Button size="sm" className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700">
-          <Star className="size-3 mr-1 fill-white" />
+        <Button
+          size="sm"
+          className={`${baseCls} bg-emerald-600 hover:bg-emerald-700 text-white`}
+        >
+          <Star className="size-3.5 mr-1.5 fill-white" />
           Review &amp; send
         </Button>
       );
     }
     if (row.status === "sent") {
       return (
-        <Button size="sm" variant="ghost" className="h-7 text-xs">
+        <Button
+          size="sm"
+          variant="outline"
+          className={`${baseCls} border-indigo-300 text-indigo-900 hover:bg-indigo-50`}
+        >
+          <Check className="size-3.5 mr-1.5" />
           Mark won
         </Button>
       );
     }
     return (
-      <Button size="sm" variant="ghost" className="h-7 text-xs text-zinc-400">
+      <Button size="sm" variant="ghost" className={`${baseCls} text-zinc-400`}>
         Open
       </Button>
     );
@@ -1563,18 +1600,17 @@ export default function QuoteInboxPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="text-[11px] uppercase tracking-wide">
-                    <TableHead>Customer</TableHead>
-                    <TableHead>Lane</TableHead>
-                    <TableHead>Mode</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Source</TableHead>
-                    <TableHead>
+                    <TableHead className="w-[180px]">Action</TableHead>
+                    <TableHead className="w-[120px]">Status</TableHead>
+                    <TableHead>Customer &amp; lane</TableHead>
+                    <TableHead className="w-[140px]">Mode</TableHead>
+                    <TableHead className="w-[110px]">
                       <span className="inline-flex items-center gap-1">
-                        <Clock className="size-3" /> Time in state
+                        <Clock className="size-3" /> Time
                       </span>
                     </TableHead>
-                    <TableHead>Detail</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
+                    <TableHead className="w-[260px]">Detail</TableHead>
+                    <TableHead className="w-[40px] text-right"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1585,86 +1621,104 @@ export default function QuoteInboxPage() {
                       const oldestKid = g.children.reduce((a, b) =>
                         a.enteredStateAt > b.enteredStateAt ? a : b,
                       );
+                      const needsReview =
+                        g.splitConfidence < SPLIT_REVIEW_THRESHOLD && !g.operatorReviewed;
                       const parentRow = (
                         <TableRow
                           key={g.groupId}
                           className="hover:bg-violet-50/40 cursor-pointer bg-violet-50/20 border-l-2 border-l-violet-300"
                           onClick={() => toggleGroup(g.groupId)}
                         >
+                          {/* Action */}
                           <TableCell>
-                            <div className="flex items-start gap-2">
-                              <span className="mt-0.5 text-violet-600">
+                            {needsReview ? (
+                              <a
+                                href={`/dev/quote-split-review?group=${g.groupId}`}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Button
+                                  size="sm"
+                                  className="h-8 w-full justify-start text-xs font-medium bg-orange-600 hover:bg-orange-700 text-white"
+                                >
+                                  <Layers className="size-3.5 mr-1.5" />
+                                  Review split
+                                </Button>
+                              </a>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 w-full justify-start text-xs font-medium border-violet-300 text-violet-900 hover:bg-violet-50"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleGroup(g.groupId);
+                                }}
+                              >
                                 {isOpen ? (
-                                  <ChevronDown className="size-4" />
+                                  <ChevronDown className="size-3.5 mr-1.5" />
                                 ) : (
-                                  <ChevronRight className="size-4" />
+                                  <ChevronRight className="size-3.5 mr-1.5" />
                                 )}
-                              </span>
-                              <div>
-                                <div className="font-medium text-sm flex items-center gap-2">
-                                  {g.customer}
-                                  <Badge className="bg-violet-100 text-violet-800 text-[10px] uppercase tracking-wide flex items-center gap-1">
-                                    <Layers className="size-2.5" />
-                                    {g.children.length} options
-                                  </Badge>
-                                </div>
-                                <div className="flex items-center gap-2 text-[11px] text-zinc-500 font-mono">
-                                  <span>{g.groupId}</span>
-                                  {g.customerYTD && (
-                                    <>
-                                      <span className="text-zinc-300">·</span>
-                                      <span>YTD {g.customerYTD}</span>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
+                                {isOpen ? "Collapse" : "Expand"} ({g.children.length})
+                              </Button>
+                            )}
                           </TableCell>
+
+                          {/* Status (group summary) */}
                           <TableCell>
-                            <div className="flex items-center gap-1.5 text-sm font-mono">
+                            <Badge className="bg-violet-100 text-violet-800 text-[10px] uppercase tracking-wide flex items-center gap-1 w-fit">
+                              <Layers className="size-2.5" />
+                              {g.children.length} options
+                            </Badge>
+                            {needsReview && (
+                              <span className="inline-block mt-1 px-1.5 py-0.5 bg-orange-100 text-orange-800 rounded text-[9px] uppercase tracking-wide">
+                                needs review
+                              </span>
+                            )}
+                          </TableCell>
+
+                          {/* Customer + lane */}
+                          <TableCell>
+                            <div className="font-medium text-sm">{g.customer}</div>
+                            <div className="flex items-center gap-1.5 text-[12px] font-mono text-zinc-700 mt-0.5">
                               <span>{g.origin}</span>
                               <ArrowRight className="size-3 text-zinc-400" />
                               <span>{g.destination}</span>
                             </div>
+                            <div className="flex items-center gap-2 text-[11px] text-zinc-500 mt-0.5">
+                              <span className="font-mono">{g.groupId}</span>
+                              {g.customerYTD && (
+                                <>
+                                  <span className="text-zinc-300">·</span>
+                                  <span>YTD {g.customerYTD}</span>
+                                </>
+                              )}
+                              <span className="text-zinc-300">·</span>
+                              <span
+                                className={
+                                  g.splitConfidence < SPLIT_REVIEW_THRESHOLD
+                                    ? "text-orange-700"
+                                    : "text-violet-700"
+                                }
+                              >
+                                AI {Math.round(g.splitConfidence * 100)}%
+                              </span>
+                            </div>
                           </TableCell>
+
+                          {/* Mode */}
                           <TableCell>
-                            <div className="text-xs text-zinc-500 italic">
+                            <div className="text-xs text-zinc-700 italic">
                               {Array.from(new Set(g.children.map((c) => c.mode))).join(" / ")}
                             </div>
                             <div className="text-[10px] text-zinc-400">
-                              {Array.from(new Set(g.children.map((c) => c.siblingIntent).filter(Boolean))).join(" · ")}
+                              {Array.from(
+                                new Set(g.children.map((c) => c.siblingIntent).filter(Boolean)),
+                              ).join(" · ")}
                             </div>
                           </TableCell>
-                          <TableCell>
-                            <div className="text-[11px] text-zinc-600">
-                              {summarizeGroupStatus(g.children)}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-1.5">
-                              <SourceIcon source={g.source} />
-                              {g.sourceInbox && (
-                                <span className="text-[11px] text-zinc-500 font-mono">
-                                  {g.sourceInbox}
-                                </span>
-                              )}
-                            </div>
-                            <div
-                              className={`text-[10px] mt-0.5 flex items-center gap-1 ${
-                                g.splitConfidence < SPLIT_REVIEW_THRESHOLD
-                                  ? "text-orange-700"
-                                  : "text-violet-700"
-                              }`}
-                            >
-                              <Sparkles className="size-2.5" />
-                              split by AI · {Math.round(g.splitConfidence * 100)}% confidence
-                              {g.splitConfidence < SPLIT_REVIEW_THRESHOLD && !g.operatorReviewed && (
-                                <span className="ml-1 px-1 py-0.5 bg-orange-100 text-orange-800 rounded text-[9px] uppercase tracking-wide">
-                                  needs review
-                                </span>
-                              )}
-                            </div>
-                          </TableCell>
+
+                          {/* Time */}
                           <TableCell>
                             <div
                               className={`text-sm font-mono ${timeTone(oldestKid.enteredStateAt, oldestKid.status)}`}
@@ -1672,48 +1726,28 @@ export default function QuoteInboxPage() {
                               {formatTime(oldestKid.enteredStateAt)}
                             </div>
                             <div className="text-[10px] text-zinc-400">
-                              email received {formatTime(g.receivedAt)} ago
+                              email {formatTime(g.receivedAt)} ago
                             </div>
                           </TableCell>
+
+                          {/* Detail */}
                           <TableCell>
-                            {g.splitConfidence < SPLIT_REVIEW_THRESHOLD && !g.operatorReviewed ? (
-                              <div className="text-[11px] text-orange-700">
+                            {needsReview ? (
+                              <div className="text-[11px] text-orange-700 font-medium">
                                 AI suggested split - confirm before drafts go live
                               </div>
                             ) : (
                               <div className="text-[11px] text-zinc-600">
-                                {g.children.filter((c) => c.status === "recommended").length} ready to send,{" "}
-                                {g.children.filter((c) => c.status === "sourcing").length} sourcing
+                                {summarizeGroupStatus(g.children)}
                               </div>
                             )}
                           </TableCell>
+
+                          {/* Source icon */}
                           <TableCell className="text-right">
-                            {g.splitConfidence < SPLIT_REVIEW_THRESHOLD && !g.operatorReviewed ? (
-                              <a
-                                href={`/dev/quote-split-review?group=${g.groupId}`}
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <Button
-                                  size="sm"
-                                  className="h-7 text-xs bg-orange-600 hover:bg-orange-700"
-                                >
-                                  <Layers className="size-3 mr-1" />
-                                  Review split
-                                </Button>
-                              </a>
-                            ) : (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-7 text-xs"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleGroup(g.groupId);
-                                }}
-                              >
-                                {isOpen ? "Collapse" : "Expand"}
-                              </Button>
-                            )}
+                            <div className="inline-flex" title={g.sourceInbox ?? g.source}>
+                              <SourceIcon source={g.source} />
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -1728,32 +1762,36 @@ export default function QuoteInboxPage() {
                             key={c.id}
                             className="hover:bg-zinc-50 cursor-pointer border-l-2 border-l-violet-100 bg-violet-50/[0.04]"
                           >
+                            {/* Action */}
                             <TableCell>
-                              <div className="pl-7">
-                                <div className="text-sm flex items-center gap-2">
-                                  <span className="text-zinc-400 font-mono text-[10px]">↳</span>
-                                  <span className="font-medium">{c.siblingIntent ?? c.mode}</span>
-                                </div>
-                                <div className="text-[11px] text-zinc-500 font-mono pl-4">
-                                  {c.id}
-                                </div>
+                              <div className="pl-4">{actionFor(c)}</div>
+                            </TableCell>
+
+                            {/* Status */}
+                            <TableCell>
+                              <Badge className={STATUS_TONE[c.status]}>
+                                {STATUS_LABEL[c.status]}
+                              </Badge>
+                            </TableCell>
+
+                            {/* Sibling intent + ID */}
+                            <TableCell>
+                              <div className="text-sm flex items-center gap-2">
+                                <span className="text-zinc-400 font-mono text-[10px]">↳</span>
+                                <span className="font-medium">{c.siblingIntent ?? c.mode}</span>
                               </div>
+                              <div className="text-[11px] text-zinc-500 font-mono pl-4">{c.id}</div>
                             </TableCell>
-                            <TableCell>
-                              <span className="text-[11px] text-zinc-400">same lane</span>
-                            </TableCell>
+
+                            {/* Mode */}
                             <TableCell>
                               <div className="text-sm">{c.mode}</div>
                               {c.equipment && (
                                 <div className="text-[11px] text-zinc-500">{c.equipment}</div>
                               )}
                             </TableCell>
-                            <TableCell>
-                              <Badge className={STATUS_TONE[c.status]}>{STATUS_LABEL[c.status]}</Badge>
-                            </TableCell>
-                            <TableCell>
-                              <span className="text-[11px] text-zinc-400">via group</span>
-                            </TableCell>
+
+                            {/* Time */}
                             <TableCell>
                               <div
                                 className={`text-sm font-mono ${timeTone(c.enteredStateAt, c.status)}`}
@@ -1761,6 +1799,8 @@ export default function QuoteInboxPage() {
                                 {formatTime(c.enteredStateAt)}
                               </div>
                             </TableCell>
+
+                            {/* Detail */}
                             <TableCell>
                               {c.status === "sourcing" && (
                                 <div className="flex items-center gap-2 text-xs">
@@ -1796,7 +1836,11 @@ export default function QuoteInboxPage() {
                                 </div>
                               )}
                             </TableCell>
-                            <TableCell className="text-right">{actionFor(c)}</TableCell>
+
+                            {/* Source (inherited from group, dimmed) */}
+                            <TableCell className="text-right">
+                              <span className="text-[10px] text-zinc-300">↑</span>
+                            </TableCell>
                           </TableRow>
                         ));
 
@@ -1806,10 +1850,26 @@ export default function QuoteInboxPage() {
                     const r = entry.row;
                     return [(
                     <TableRow key={r.id} className="hover:bg-zinc-50 cursor-pointer">
+                      {/* Action */}
+                      <TableCell>{actionFor(r)}</TableCell>
+
+                      {/* Status */}
+                      <TableCell>
+                        <Badge className={STATUS_TONE[r.status]}>
+                          {STATUS_LABEL[r.status]}
+                        </Badge>
+                      </TableCell>
+
+                      {/* Customer + lane */}
                       <TableCell>
                         <div className="font-medium text-sm">{r.customer}</div>
-                        <div className="flex items-center gap-2 text-[11px] text-zinc-500 font-mono">
-                          <span>{r.id}</span>
+                        <div className="flex items-center gap-1.5 text-[12px] font-mono text-zinc-700 mt-0.5">
+                          <span>{r.origin}</span>
+                          <ArrowRight className="size-3 text-zinc-400" />
+                          <span>{r.destination}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] text-zinc-500 mt-0.5">
+                          <span className="font-mono">{r.id}</span>
                           {r.customerYTD && (
                             <>
                               <span className="text-zinc-300">·</span>
@@ -1818,39 +1878,16 @@ export default function QuoteInboxPage() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5 text-sm font-mono">
-                          <span>{r.origin}</span>
-                          <ArrowRight className="size-3 text-zinc-400" />
-                          <span>{r.destination}</span>
-                        </div>
-                      </TableCell>
+
+                      {/* Mode */}
                       <TableCell>
                         <div className="text-sm">{r.mode}</div>
                         {r.equipment && (
                           <div className="text-[11px] text-zinc-500">{r.equipment}</div>
                         )}
                       </TableCell>
-                      <TableCell>
-                        <Badge className={STATUS_TONE[r.status]}>
-                          {STATUS_LABEL[r.status]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1.5">
-                          <SourceIcon source={r.source} />
-                          {r.sourceInbox && (
-                            <span className="text-[11px] text-zinc-500 font-mono">
-                              {r.sourceInbox}
-                            </span>
-                          )}
-                          {!r.sourceInbox && (
-                            <span className="text-[11px] text-zinc-500 capitalize">
-                              {r.source}
-                            </span>
-                          )}
-                        </div>
-                      </TableCell>
+
+                      {/* Time */}
                       <TableCell>
                         <div className={`text-sm font-mono ${timeTone(r.enteredStateAt, r.status)}`}>
                           {formatTime(r.enteredStateAt)}
@@ -1859,6 +1896,8 @@ export default function QuoteInboxPage() {
                           received {formatTime(r.receivedAt)} ago
                         </div>
                       </TableCell>
+
+                      {/* Detail */}
                       <TableCell>
                         {r.status === "sourcing" && (
                           <div className="flex items-center gap-2 text-xs">
@@ -1926,7 +1965,16 @@ export default function QuoteInboxPage() {
                           </div>
                         )}
                       </TableCell>
-                      <TableCell className="text-right">{actionFor(r)}</TableCell>
+
+                      {/* Source icon */}
+                      <TableCell className="text-right">
+                        <div
+                          className="inline-flex"
+                          title={r.sourceInbox ?? r.source}
+                        >
+                          <SourceIcon source={r.source} />
+                        </div>
+                      </TableCell>
                     </TableRow>
                     )];
                   })}
