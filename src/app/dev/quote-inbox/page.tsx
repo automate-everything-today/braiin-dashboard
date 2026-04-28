@@ -35,6 +35,7 @@ import {
   ChevronRight,
   Clock,
   Filter,
+  HandHelping,
   Inbox,
   Layers,
   Mail,
@@ -54,6 +55,7 @@ import {
 type DraftStatus =
   | "new"
   | "gathering"
+  | "needs_input"
   | "ready"
   | "sourcing"
   | "recommended"
@@ -61,6 +63,15 @@ type DraftStatus =
   | "won"
   | "lost"
   | "expired";
+
+type InputKind = "delivery_rate" | "spot_rate" | "question" | "haulage" | "other";
+
+interface InputRequest {
+  kind: InputKind;
+  description: string;
+  askedOf?: string; // staff name or label
+  askedAt: number; // minutes ago
+}
 
 type SourceType = "email" | "manual" | "portal" | "phone";
 
@@ -82,6 +93,8 @@ interface InboxRow {
   topRecommendation?: string;
   margin?: string;
   missing?: string[];
+  // Operator-facing open input requests (when status === "needs_input")
+  pendingInputs?: InputRequest[];
   // Sibling-group support: when N quote drafts come from one email
   siblingIntent?: string; // e.g. "Express", "Standard", "LCL option"
 }
@@ -179,6 +192,34 @@ const ROWS: InboxRow[] = [
     receivedAt: 96,
     carriersInvited: 6,
     carriersResponded: 2,
+  },
+  {
+    id: "BR-2026-0428-1233",
+    customer: "Lansdowne Manufacturing",
+    customerYTD: "£74k",
+    origin: "CNSHA",
+    destination: "GBLEE",
+    mode: "Sea FCL",
+    equipment: "1× 40HC + UK delivery to Leeds",
+    status: "needs_input",
+    source: "email",
+    sourceInbox: "rob@",
+    enteredStateAt: 38,
+    receivedAt: 64,
+    pendingInputs: [
+      {
+        kind: "haulage",
+        description: "FXT-Leeds 40HC delivery rate (no haulier on file for LS postcodes)",
+        askedOf: "Marcus",
+        askedAt: 38,
+      },
+      {
+        kind: "question",
+        description: "Customer wants estimated UK customs duty - can ops confirm commodity classification?",
+        askedOf: "Sarah",
+        askedAt: 22,
+      },
+    ],
   },
   {
     id: "BR-2026-0428-1234",
@@ -382,6 +423,7 @@ const ALL_ROWS: InboxRow[] = [
 const STATUS_LABEL: Record<DraftStatus, string> = {
   new: "new",
   gathering: "gathering",
+  needs_input: "needs input",
   ready: "ready",
   sourcing: "sourcing",
   recommended: "recommended",
@@ -394,6 +436,7 @@ const STATUS_LABEL: Record<DraftStatus, string> = {
 const STATUS_TONE: Record<DraftStatus, string> = {
   new: "bg-zinc-100 text-zinc-700",
   gathering: "bg-amber-100 text-amber-800",
+  needs_input: "bg-orange-100 text-orange-800",
   ready: "bg-sky-100 text-sky-800",
   sourcing: "bg-violet-100 text-violet-800",
   recommended: "bg-emerald-100 text-emerald-800",
@@ -404,13 +447,22 @@ const STATUS_TONE: Record<DraftStatus, string> = {
 };
 
 const STATUS_GROUPS: Array<{ id: string; label: string; statuses: DraftStatus[] }> = [
-  { id: "open", label: "Open", statuses: ["new", "gathering", "ready", "sourcing", "recommended"] },
+  { id: "open", label: "Open", statuses: ["new", "gathering", "needs_input", "ready", "sourcing", "recommended"] },
+  { id: "needs_input", label: "Needs input", statuses: ["needs_input"] },
   { id: "sent", label: "Awaiting", statuses: ["sent"] },
   { id: "closed", label: "Closed", statuses: ["won", "lost", "expired"] },
   { id: "all", label: "All", statuses: [
-    "new", "gathering", "ready", "sourcing", "recommended", "sent", "won", "lost", "expired",
+    "new", "gathering", "needs_input", "ready", "sourcing", "recommended", "sent", "won", "lost", "expired",
   ] },
 ];
+
+const INPUT_KIND_LABEL: Record<InputKind, string> = {
+  delivery_rate: "Delivery rate",
+  spot_rate: "Spot rate",
+  question: "Question",
+  haulage: "Haulage rate",
+  other: "Other",
+};
 
 // ============================================================
 // Helpers
@@ -424,9 +476,13 @@ function formatTime(minutes: number): string {
 }
 
 function timeTone(minutes: number, status: DraftStatus): string {
-  // Highlight stale states. "ready" should not sit > 30 min before sourcing.
-  // "gathering" should not sit > 60 min waiting on operator.
+  // Highlight stale states. SLA windows:
+  //   ready: should fan out within 30 min
+  //   gathering: customer should reply within 60 min before chasing
+  //   needs_input: operator should answer within 30 min - it's blocking
+  //   sourcing: most carriers reply within 2h
   if (status === "ready" && minutes > 30) return "text-rose-700 font-medium";
+  if (status === "needs_input" && minutes > 30) return "text-rose-700 font-medium";
   if (status === "gathering" && minutes > 60) return "text-rose-700 font-medium";
   if (status === "sourcing" && minutes > 120) return "text-amber-700";
   return "text-zinc-600";
@@ -823,17 +879,37 @@ function StatStrip({ rows }: { rows: InboxRow[] }) {
   const stale = rows.filter(
     (r) =>
       (r.status === "ready" && r.enteredStateAt > 30) ||
+      (r.status === "needs_input" && r.enteredStateAt > 30) ||
       (r.status === "gathering" && r.enteredStateAt > 60),
   ).length;
 
-  const open = (counts.new ?? 0) + (counts.gathering ?? 0) + (counts.ready ?? 0) + (counts.sourcing ?? 0) + (counts.recommended ?? 0);
+  const open =
+    (counts.new ?? 0) +
+    (counts.gathering ?? 0) +
+    (counts.needs_input ?? 0) +
+    (counts.ready ?? 0) +
+    (counts.sourcing ?? 0) +
+    (counts.recommended ?? 0);
 
   return (
-    <div className="grid grid-cols-5 gap-3">
+    <div className="grid grid-cols-6 gap-3">
       <Card>
         <CardContent className="py-3 px-4">
           <div className="text-[11px] uppercase tracking-wide text-zinc-500">Open RFQs</div>
           <div className="text-2xl font-mono">{open}</div>
+        </CardContent>
+      </Card>
+      <Card className={(counts.needs_input ?? 0) > 0 ? "border-orange-200 bg-orange-50/40" : ""}>
+        <CardContent className="py-3 px-4">
+          <div className="text-[11px] uppercase tracking-wide text-zinc-500">Needs your input</div>
+          <div
+            className={`text-2xl font-mono flex items-center gap-2 ${
+              (counts.needs_input ?? 0) > 0 ? "text-orange-700" : ""
+            }`}
+          >
+            {counts.needs_input ?? 0}
+            {(counts.needs_input ?? 0) > 0 && <HandHelping className="size-4" />}
+          </div>
         </CardContent>
       </Card>
       <Card>
@@ -926,6 +1002,14 @@ export default function QuoteInboxPage() {
       return (
         <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAskInfoRow(row)}>
           Ask for info
+        </Button>
+      );
+    }
+    if (row.status === "needs_input") {
+      return (
+        <Button size="sm" className="h-7 text-xs bg-orange-600 hover:bg-orange-700">
+          <HandHelping className="size-3 mr-1" />
+          Provide input
         </Button>
       );
     }
@@ -1361,6 +1445,23 @@ export default function QuoteInboxPage() {
                           <div className="text-[11px] text-amber-700">
                             missing: {r.missing.slice(0, 2).join(", ")}
                             {r.missing.length > 2 && ` +${r.missing.length - 2}`}
+                          </div>
+                        )}
+                        {r.status === "needs_input" && r.pendingInputs && (
+                          <div className="space-y-0.5">
+                            {r.pendingInputs.slice(0, 2).map((p, i) => (
+                              <div key={i} className="text-[11px] text-orange-800 leading-tight">
+                                <span className="font-medium">{INPUT_KIND_LABEL[p.kind]}</span>
+                                {p.askedOf && (
+                                  <span className="text-zinc-500"> · {p.askedOf}</span>
+                                )}
+                              </div>
+                            ))}
+                            {r.pendingInputs.length > 2 && (
+                              <div className="text-[10px] text-zinc-500">
+                                +{r.pendingInputs.length - 2} more
+                              </div>
+                            )}
                           </div>
                         )}
                         {r.status === "ready" && (
