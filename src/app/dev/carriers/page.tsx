@@ -8,7 +8,7 @@
  * partners.carriers + partners.scorecards + partners.lane_stats.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,9 @@ import {
 } from "@/components/ui/table";
 import { PageGuard } from "@/components/page-guard";
 import {
+  AlertTriangle,
+  Check,
+  Download,
   Mail,
   Plane,
   Plus,
@@ -30,8 +33,11 @@ import {
   Ship,
   Sparkles,
   Truck,
+  Upload,
   Users,
+  X,
 } from "lucide-react";
+import { downloadCsv, parseCsv, serializeCsv, type CsvRow } from "@/lib/csv";
 
 const PILL_SM =
   "text-[10px] px-1.5 py-0 leading-[18px] h-[18px] font-normal tracking-normal";
@@ -142,37 +148,445 @@ const MODE_LABEL: Record<Mode, string> = {
 };
 
 // ============================================================
+// CSV import / export
+// ============================================================
+
+const CSV_HEADERS = [
+  "id",
+  "name",
+  "kind",
+  "modes",
+  "scac",
+  "iata",
+  "contracting",
+  "manual",
+  "notes",
+] as const;
+
+const VALID_KIND = ["carrier", "agent", "broker", "nvocc", "aggregator"];
+const VALID_CONTRACTING = ["api", "email", "aggregator", "portal"];
+const VALID_MODE = ["sea_fcl", "sea_lcl", "air", "road", "rail"];
+
+interface UploadIssue {
+  rowNumber: number;
+  level: "error" | "warning";
+  message: string;
+}
+
+interface ParsedUpload {
+  rows: Carrier[];
+  issues: UploadIssue[];
+  totalParsed: number;
+  newRows: number;
+  updatedRows: number;
+}
+
+function carrierToCsv(c: Carrier): CsvRow {
+  return {
+    id: c.id,
+    name: c.name,
+    kind: c.kind,
+    modes: c.modes.join("|"),
+    scac: c.scac ?? "",
+    iata: c.iata ?? "",
+    contracting: c.contracting,
+    manual: c.manual ? "true" : "false",
+    notes: c.notes ?? "",
+  };
+}
+
+function csvToCarrier(
+  row: CsvRow,
+  rowNumber: number,
+  existing: Carrier[],
+): { carrier: Carrier | null; issues: UploadIssue[] } {
+  const issues: UploadIssue[] = [];
+  const id = (row.id ?? "").trim();
+  const name = (row.name ?? "").trim();
+  if (!name) {
+    issues.push({ rowNumber, level: "error", message: "name is required" });
+    return { carrier: null, issues };
+  }
+  const kind = (row.kind ?? "carrier").trim() as Kind;
+  if (!VALID_KIND.includes(kind)) {
+    issues.push({
+      rowNumber,
+      level: "error",
+      message: `${name}: kind must be one of ${VALID_KIND.join(", ")}`,
+    });
+    return { carrier: null, issues };
+  }
+  const contracting = (row.contracting ?? "email").trim() as Carrier["contracting"];
+  if (!VALID_CONTRACTING.includes(contracting)) {
+    issues.push({
+      rowNumber,
+      level: "error",
+      message: `${name}: contracting must be one of ${VALID_CONTRACTING.join(", ")}`,
+    });
+    return { carrier: null, issues };
+  }
+  const modesRaw = (row.modes ?? "")
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const m of modesRaw) {
+    if (!VALID_MODE.includes(m)) {
+      issues.push({
+        rowNumber,
+        level: "error",
+        message: `${name}: mode "${m}" not one of ${VALID_MODE.join(", ")}`,
+      });
+      return { carrier: null, issues };
+    }
+  }
+
+  // Auto-id if blank: name initials + 4-digit random
+  const finalId =
+    id ||
+    name
+      .split(/\s+/)
+      .map((w) => w[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 4) +
+      "-" +
+      Math.floor(Math.random() * 10000)
+        .toString()
+        .padStart(4, "0");
+
+  if (id && existing.some((e) => e.id === id)) {
+    issues.push({
+      rowNumber,
+      level: "warning",
+      message: `${id}: existing carrier will be UPDATED`,
+    });
+  }
+
+  // Manually-added carriers default to neutral 50 scores until they
+  // gather data; existing carriers keep their existing scores.
+  const existingMatch = existing.find((e) => e.id === finalId);
+  const defaults = existingMatch ?? {
+    composite: 50,
+    suitability: 50,
+    speed: 50,
+    accuracy: 50,
+    price: 50,
+    service: 50,
+    rfq90d: 0,
+    reply90d: 0,
+    medianReplyMin: 0,
+    laneCount: 0,
+    lastUsedDays: 0,
+  };
+
+  return {
+    carrier: {
+      id: finalId,
+      name,
+      kind,
+      scac: (row.scac ?? "").trim() || undefined,
+      iata: (row.iata ?? "").trim() || undefined,
+      modes: modesRaw as Mode[],
+      contracting,
+      composite: defaults.composite,
+      suitability: defaults.suitability,
+      speed: defaults.speed,
+      accuracy: defaults.accuracy,
+      price: defaults.price,
+      service: defaults.service,
+      rfq90d: defaults.rfq90d,
+      reply90d: defaults.reply90d,
+      medianReplyMin: defaults.medianReplyMin,
+      laneCount: defaults.laneCount,
+      lastUsedDays: defaults.lastUsedDays,
+      manual: (row.manual ?? "true").trim().toLowerCase() !== "false",
+      notes: (row.notes ?? "").trim() || undefined,
+    },
+    issues,
+  };
+}
+
+function makeCarrierTemplate(): string {
+  const examples: Carrier[] = [
+    {
+      id: "EXAMPLE-OCN",
+      name: "Example Ocean Lines",
+      kind: "carrier",
+      scac: "EXOL",
+      modes: ["sea_fcl"],
+      contracting: "email",
+      composite: 50,
+      suitability: 50,
+      speed: 50,
+      accuracy: 50,
+      price: 50,
+      service: 50,
+      rfq90d: 0,
+      reply90d: 0,
+      medianReplyMin: 0,
+      laneCount: 0,
+      lastUsedDays: 0,
+      manual: true,
+      notes: "Replace with real ocean carrier",
+    },
+    {
+      id: "EXAMPLE-AIR",
+      name: "Example Air Cargo",
+      kind: "carrier",
+      iata: "999",
+      modes: ["air"],
+      contracting: "api",
+      composite: 50,
+      suitability: 50,
+      speed: 50,
+      accuracy: 50,
+      price: 50,
+      service: 50,
+      rfq90d: 0,
+      reply90d: 0,
+      medianReplyMin: 0,
+      laneCount: 0,
+      lastUsedDays: 0,
+      manual: true,
+    },
+    {
+      id: "EXAMPLE-ROAD",
+      name: "Example Road Haulier",
+      kind: "broker",
+      modes: ["road"],
+      contracting: "email",
+      composite: 50,
+      suitability: 50,
+      speed: 50,
+      accuracy: 50,
+      price: 50,
+      service: 50,
+      rfq90d: 0,
+      reply90d: 0,
+      medianReplyMin: 0,
+      laneCount: 0,
+      lastUsedDays: 0,
+      manual: true,
+      notes: "UK road network coverage",
+    },
+  ];
+  return serializeCsv([...CSV_HEADERS], examples.map(carrierToCsv));
+}
+
+interface UploadPreviewProps {
+  parsed: ParsedUpload | null;
+  onClose: () => void;
+  onConfirm: (rows: Carrier[]) => void;
+}
+
+function UploadPreviewPanel({ parsed, onClose, onConfirm }: UploadPreviewProps) {
+  if (!parsed) return null;
+  const errorCount = parsed.issues.filter((i) => i.level === "error").length;
+  const warningCount = parsed.issues.filter((i) => i.level === "warning").length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div
+        className="flex-1 bg-zinc-900/30 backdrop-blur-[1px]"
+        onClick={onClose}
+      />
+      <div className="w-[680px] bg-white border-l border-zinc-200 flex flex-col shadow-2xl">
+        <div className="border-b px-5 py-4 flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
+              <Upload className="size-3.5" />
+              Upload preview
+            </div>
+            <div className="font-medium">
+              {parsed.totalParsed} rows parsed ·{" "}
+              <span className="text-emerald-700">{parsed.newRows} new</span> +{" "}
+              <span className="text-amber-700">{parsed.updatedRows} update</span>
+            </div>
+            <div className="text-[11px] text-zinc-500 mt-1 inline-flex items-center gap-3">
+              {errorCount > 0 && (
+                <span className="text-rose-700">
+                  <AlertTriangle className="size-3 inline" /> {errorCount} error
+                  {errorCount === 1 ? "" : "s"}
+                </span>
+              )}
+              {warningCount > 0 && (
+                <span className="text-amber-700">
+                  {warningCount} warning{warningCount === 1 ? "" : "s"}
+                </span>
+              )}
+              {errorCount === 0 && warningCount === 0 && (
+                <span className="text-emerald-700">
+                  <Check className="size-3 inline" /> All rows valid
+                </span>
+              )}
+            </div>
+          </div>
+          <Button size="sm" variant="ghost" onClick={onClose} className="size-8 p-0">
+            <X className="size-4" />
+          </Button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+          {parsed.issues.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+                Issues
+              </div>
+              {parsed.issues.map((iss, i) => (
+                <div
+                  key={i}
+                  className={`flex items-start gap-2 text-xs px-3 py-1.5 rounded border ${
+                    iss.level === "error"
+                      ? "bg-rose-50/60 border-rose-200 text-rose-800"
+                      : "bg-amber-50/60 border-amber-200 text-amber-800"
+                  }`}
+                >
+                  <span className="font-mono text-[10px] shrink-0">
+                    row {iss.rowNumber}
+                  </span>
+                  <span>{iss.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {parsed.rows.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+                Carriers ready to import ({parsed.rows.length})
+              </div>
+              {parsed.rows.map((c) => (
+                <div
+                  key={c.id}
+                  className="flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-zinc-200 hover:bg-zinc-50"
+                >
+                  <span className="font-medium text-zinc-800 truncate flex-1">
+                    {c.name}
+                  </span>
+                  <Badge className={`${PILL_SM} ${KIND_TONE[c.kind]}`}>
+                    {KIND_LABEL[c.kind]}
+                  </Badge>
+                  <div className="inline-flex items-center gap-0.5 text-zinc-500">
+                    {c.modes.map((m) => (
+                      <ModeIcon key={m} mode={m} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="border-t px-5 py-3 flex items-center justify-between bg-zinc-50">
+          <div className="text-[11px] text-zinc-500">
+            Errors block import. Warnings are informational.
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-emerald-600 hover:bg-emerald-700"
+              disabled={errorCount > 0 || parsed.rows.length === 0}
+              onClick={() => {
+                onConfirm(parsed.rows);
+                onClose();
+              }}
+            >
+              <Upload className="size-3.5 mr-1.5" />
+              Import {parsed.rows.length} carrier{parsed.rows.length === 1 ? "" : "s"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // Page
 // ============================================================
 
 export default function CarriersPage() {
+  // Mutable state - edits persist within session.
+  const [carriers, setCarriers] = useState<Carrier[]>(CARRIERS);
+  const [upload, setUpload] = useState<ParsedUpload | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function handleTemplate() {
+    downloadCsv("carriers-template.csv", makeCarrierTemplate());
+  }
+
+  function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result ?? "");
+      const csvRows = parseCsv(text);
+      const allIssues: UploadIssue[] = [];
+      const parsed: Carrier[] = [];
+      let newCount = 0;
+      let updateCount = 0;
+      csvRows.forEach((row, idx) => {
+        const { carrier, issues } = csvToCarrier(row, idx + 2, carriers);
+        allIssues.push(...issues);
+        if (carrier) {
+          parsed.push(carrier);
+          if (carriers.some((c) => c.id === carrier.id)) updateCount++;
+          else newCount++;
+        }
+      });
+      setUpload({
+        rows: parsed,
+        issues: allIssues,
+        totalParsed: csvRows.length,
+        newRows: newCount,
+        updatedRows: updateCount,
+      });
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    };
+    reader.readAsText(file);
+  }
+
+  function handleConfirmImport(rows: Carrier[]) {
+    setCarriers((prev) => {
+      const map = new Map(prev.map((c) => [c.id, c]));
+      for (const r of rows) map.set(r.id, r);
+      return Array.from(map.values());
+    });
+  }
+
   const [query, setQuery] = useState("");
   const [modeFilter, setModeFilter] = useState<Mode | "all">("all");
   const [kindFilter, setKindFilter] = useState<Kind | "all">("all");
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return CARRIERS.filter((c) => {
-      if (modeFilter !== "all" && !c.modes.includes(modeFilter)) return false;
-      if (kindFilter !== "all" && c.kind !== kindFilter) return false;
-      if (q.length > 0) {
-        const hay = [c.name, c.scac ?? "", c.iata ?? "", c.notes ?? ""]
-          .join(" ")
-          .toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    }).sort((a, b) => b.composite - a.composite);
-  }, [query, modeFilter, kindFilter]);
+    return carriers
+      .filter((c) => {
+        if (modeFilter !== "all" && !c.modes.includes(modeFilter)) return false;
+        if (kindFilter !== "all" && c.kind !== kindFilter) return false;
+        if (q.length > 0) {
+          const hay = [c.name, c.scac ?? "", c.iata ?? "", c.notes ?? ""]
+            .join(" ")
+            .toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => b.composite - a.composite);
+  }, [carriers, query, modeFilter, kindFilter]);
 
   const counts = useMemo(() => {
     return {
-      total: CARRIERS.length,
-      manual: CARRIERS.filter((c) => c.manual).length,
-      aggregator: CARRIERS.filter((c) => c.kind === "aggregator").length,
-      api: CARRIERS.filter((c) => c.contracting === "api").length,
+      total: carriers.length,
+      manual: carriers.filter((c) => c.manual).length,
+      aggregator: carriers.filter((c) => c.kind === "aggregator").length,
+      api: carriers.filter((c) => c.contracting === "api").length,
     };
-  }, []);
+  }, [carriers]);
 
   return (
     <PageGuard pageId="dev_carriers">
@@ -187,6 +601,25 @@ export default function CarriersPage() {
                 /carriers
               </Badge>
             </div>
+            <Button variant="outline" size="sm" onClick={handleTemplate}>
+              <Download className="size-3.5 mr-1.5" />
+              Template
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Upload className="size-3.5 mr-1.5" />
+              Upload CSV
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              onChange={handleUpload}
+              className="hidden"
+            />
             <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700">
               <Plus className="size-3.5 mr-1.5" />
               Add carrier
@@ -417,12 +850,18 @@ export default function CarriersPage() {
           </Card>
 
           <div className="text-[11px] text-zinc-400 text-center pb-6">
-            Mock-up · static data, no backend calls · production reads{" "}
+            Mock-up · static data + session-only edits · production reads{" "}
             <span className="font-mono">partners.carriers</span> +{" "}
             <span className="font-mono">partners.scorecards</span> +{" "}
             <span className="font-mono">partners.lane_stats</span>.
           </div>
         </div>
+
+        <UploadPreviewPanel
+          parsed={upload}
+          onClose={() => setUpload(null)}
+          onConfirm={handleConfirmImport}
+        />
       </div>
     </PageGuard>
   );

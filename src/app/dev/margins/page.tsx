@@ -1287,6 +1287,8 @@ interface MatchResult {
   matchedFields: string[];
   rejectedField?: string;
   computedSell?: number;
+  preMinSell?: number;       // sell before min-charge floor
+  minLifted?: boolean;       // true when min-charge raised the sell
 }
 
 function evaluateRule(rule: MarginRule, t: TestInputs): MatchResult {
@@ -1351,8 +1353,11 @@ function evaluateRule(rule: MarginRule, t: TestInputs): MatchResult {
     default:
       sell = t.costAmount + rule.markupValue;
   }
+  const preMinSell = sell;
+  let minLifted = false;
   if (rule.minChargeAmount && sell < rule.minChargeAmount) {
     sell = rule.minChargeAmount;
+    minLifted = true;
   }
 
   return {
@@ -1360,6 +1365,8 @@ function evaluateRule(rule: MarginRule, t: TestInputs): MatchResult {
     matches: true,
     matchedFields,
     computedSell: sell,
+    preMinSell,
+    minLifted,
   };
 }
 
@@ -1567,11 +1574,28 @@ function TestCalculatorPanel({ open, onClose, rules }: TestCalculatorProps) {
                   {fmtMarkup(winner.rule)}
                 </div>
                 {winner.computedSell !== undefined && (
-                  <div className="mt-1">
-                    Sample: {t.costCurrency} {t.costAmount.toFixed(2)} cost ·
-                    sell <span className="font-mono font-medium text-emerald-700">
-                      {t.costCurrency} {winner.computedSell.toFixed(2)}
-                    </span>
+                  <div className="mt-1 space-y-0.5">
+                    <div>
+                      Sample: {t.costCurrency} {t.costAmount.toFixed(2)} cost ·
+                      sell{" "}
+                      <span className="font-mono font-medium text-emerald-700">
+                        {t.costCurrency} {winner.computedSell.toFixed(2)}
+                      </span>
+                    </div>
+                    {winner.minLifted && winner.preMinSell !== undefined && (
+                      <div className="text-[11px] text-amber-700 inline-flex items-center gap-1">
+                        <AlertTriangle className="size-3" />
+                        Min-charge floor lifted sell from{" "}
+                        <span className="font-mono">
+                          {t.costCurrency} {winner.preMinSell.toFixed(2)}
+                        </span>{" "}
+                        to{" "}
+                        <span className="font-mono">
+                          {winner.rule.minChargeCurrency ?? t.costCurrency}{" "}
+                          {winner.rule.minChargeAmount?.toFixed(2)}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
