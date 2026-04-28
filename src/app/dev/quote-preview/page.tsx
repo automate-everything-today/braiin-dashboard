@@ -377,6 +377,50 @@ function unitCountFor(type: MarginType): number {
   return 0;
 }
 
+// ----- Macro-groups: how the operator + customer see charges grouped -----
+
+type MacroGroup =
+  | "origin_exw"
+  | "freight"
+  | "destination_delivery"
+  | "insurance_other";
+
+const MACRO_GROUP_LABEL: Record<MacroGroup, string> = {
+  origin_exw: "Origin and EXW",
+  freight: "Freight",
+  destination_delivery: "Destination and Delivery",
+  insurance_other: "Insurance and Other",
+};
+
+const MACRO_GROUP_TONE: Record<MacroGroup, string> = {
+  origin_exw: "border-l-amber-400 bg-amber-50/40",
+  freight: "border-l-violet-400 bg-violet-50/40",
+  destination_delivery: "border-l-cyan-400 bg-cyan-50/40",
+  insurance_other: "border-l-zinc-400 bg-zinc-50/40",
+};
+
+const MACRO_GROUP_ORDER: MacroGroup[] = [
+  "origin_exw",
+  "freight",
+  "destination_delivery",
+  "insurance_other",
+];
+
+// Category -> macro-group default mapping. Customs export goes to
+// origin_exw; customs import would go to destination_delivery (operator
+// can override per line in production via charge_lines.macro_group).
+const CATEGORY_TO_MACRO: Record<ChargeCategory, MacroGroup> = {
+  origin: "origin_exw",
+  pickup: "origin_exw",
+  customs: "origin_exw", // default - operator can override per line
+  freight: "freight",
+  surcharges: "freight",
+  destination: "destination_delivery",
+  delivery: "destination_delivery",
+  insurance: "insurance_other",
+  other: "insurance_other",
+};
+
 const CATEGORY_LABEL: Record<ChargeCategory, string> = {
   origin: "Origin",
   pickup: "Pickup / collection",
@@ -487,6 +531,15 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
   const [validityDays, setValidityDays] = useState<7 | 14 | 21 | 30>(14);
   const [validityDate, setValidityDate] = useState<string>("2026-05-12");
 
+  // Customer-view display toggles. Operator chooses what the customer
+  // sees on the quote PDF / email cover.
+  const [showMacroGroups, setShowMacroGroups] = useState(true);
+  const [showCurrencySubtotals, setShowCurrencySubtotals] = useState(false);
+  const [showCurrencyTotals, setShowCurrencyTotals] = useState(true);
+  // All-in total is always shown and cannot be hidden - it's the
+  // bottom line of the quote. (Kept as state-shaped placeholder for
+  // schema parity but no toggle in the UI.)
+
   // Per-line state
   const [state, setState] = useState<Record<string, LineState>>(() =>
     HAPAG_LINES.reduce(
@@ -596,6 +649,86 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
     return d.toISOString().slice(0, 10);
   }, [validityMode, validityDays, validityDate]);
 
+  // Lines grouped by macro_group, then sub-grouped by cost currency.
+  // Per-currency subtotals computed on sell amounts in their native
+  // currency; macro-group subtotal converted to output currency.
+  const grouped = useMemo(() => {
+    interface CurrencyBucket {
+      currency: Currency;
+      lines: Array<{ line: ChargeLine; sellNative: number; sellOutput: number }>;
+      sellNative: number;
+      sellOutput: number;
+    }
+    interface MacroBucket {
+      group: MacroGroup;
+      currencies: CurrencyBucket[];
+      sellOutput: number;
+      visibleLineCount: number;
+    }
+    interface CurrencyTotal {
+      currency: Currency;
+      sellNative: number;
+      sellOutput: number;
+    }
+
+    const macroMap = new Map<MacroGroup, MacroBucket>();
+    const totalsByCurrency = new Map<Currency, CurrencyTotal>();
+
+    for (const l of HAPAG_LINES) {
+      const s = state[l.id];
+      if (!s.visible) continue;
+      const sellNative = sellAmount(l, s);
+      const sellOutput = convert(sellNative, s.costCurrency, outputCurrency);
+      const macro = CATEGORY_TO_MACRO[l.category];
+
+      // Currency total at the bottom
+      const ct = totalsByCurrency.get(s.costCurrency);
+      if (ct) {
+        ct.sellNative += sellNative;
+        ct.sellOutput += sellOutput;
+      } else {
+        totalsByCurrency.set(s.costCurrency, {
+          currency: s.costCurrency,
+          sellNative,
+          sellOutput,
+        });
+      }
+
+      // Macro bucket
+      let mb = macroMap.get(macro);
+      if (!mb) {
+        mb = { group: macro, currencies: [], sellOutput: 0, visibleLineCount: 0 };
+        macroMap.set(macro, mb);
+      }
+      mb.sellOutput += sellOutput;
+      mb.visibleLineCount += 1;
+
+      // Currency sub-bucket within the macro
+      let cb = mb.currencies.find((c) => c.currency === s.costCurrency);
+      if (!cb) {
+        cb = {
+          currency: s.costCurrency,
+          lines: [],
+          sellNative: 0,
+          sellOutput: 0,
+        };
+        mb.currencies.push(cb);
+      }
+      cb.lines.push({ line: l, sellNative, sellOutput });
+      cb.sellNative += sellNative;
+      cb.sellOutput += sellOutput;
+    }
+
+    const macros = MACRO_GROUP_ORDER.map((g) => macroMap.get(g)).filter(
+      (m): m is MacroBucket => m !== undefined,
+    );
+
+    return {
+      macros,
+      currencyTotals: Array.from(totalsByCurrency.values()),
+    };
+  }, [state, outputCurrency]);
+
   if (!open) return null;
 
   // Group lines by category for the operator view.
@@ -607,17 +740,13 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
     {} as Record<ChargeCategory, ChargeLine[]>,
   );
 
-  const orderedCategories: ChargeCategory[] = [
-    "origin",
-    "pickup",
-    "freight",
-    "surcharges",
-    "destination",
-    "delivery",
-    "customs",
-    "insurance",
-    "other",
-  ];
+  // Categories ordered within each macro-group for the operator view.
+  const CATEGORIES_BY_MACRO: Record<MacroGroup, ChargeCategory[]> = {
+    origin_exw: ["origin", "pickup", "customs"],
+    freight: ["freight", "surcharges"],
+    destination_delivery: ["destination", "delivery"],
+    insurance_other: ["insurance", "other"],
+  };
 
   // Pre-existing consolidation labels - operator can pick from these or type new
   const existingGroups = Array.from(
@@ -773,12 +902,58 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
             <div className="px-5 py-3 border-b bg-white sticky top-0 z-10">
               <div className="text-[11px] uppercase tracking-wide text-zinc-500 flex items-center gap-1.5">
                 <Sparkles className="size-3 text-violet-600" />
-                Operator detail · {HAPAG_LINES.length} lines
+                Operator detail · {HAPAG_LINES.length} lines · grouped by section
               </div>
             </div>
 
-            {orderedCategories.map((cat) => {
-              const lines = byCategory[cat];
+            {MACRO_GROUP_ORDER.map((mg) => {
+              const macroCats = CATEGORIES_BY_MACRO[mg];
+              const macroLines = HAPAG_LINES.filter((l) =>
+                macroCats.includes(l.category),
+              );
+              if (macroLines.length === 0) return null;
+
+              // Per-currency subtotals (visible lines only) for this macro
+              const perCurrency = new Map<Currency, number>();
+              for (const l of macroLines) {
+                const s = state[l.id];
+                if (!s.visible) continue;
+                const sellNative = sellAmount(l, s);
+                perCurrency.set(
+                  s.costCurrency,
+                  (perCurrency.get(s.costCurrency) ?? 0) + sellNative,
+                );
+              }
+              const macroTotalOutput = Array.from(perCurrency.entries()).reduce(
+                (n, [cur, amt]) => n + convert(amt, cur, outputCurrency),
+                0,
+              );
+
+              return (
+                <div key={mg} className={`border-b border-l-4 ${MACRO_GROUP_TONE[mg]}`}>
+                  <div className="px-5 py-2 flex items-center justify-between">
+                    <div className="text-[12px] font-semibold text-zinc-800 uppercase tracking-wide">
+                      {MACRO_GROUP_LABEL[mg]}
+                    </div>
+                    <div className="text-[11px] text-zinc-600 inline-flex items-center gap-2">
+                      {Array.from(perCurrency.entries()).map(([cur, amt]) => (
+                        <span key={cur} className="font-mono">
+                          {fmtCurrency(amt, cur)}
+                        </span>
+                      ))}
+                      {perCurrency.size > 1 && (
+                        <>
+                          <span className="text-zinc-300">≈</span>
+                          <span className="font-mono font-medium text-zinc-800">
+                            {fmtCurrency(macroTotalOutput, outputCurrency)}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {macroCats.map((cat) => {
+              const lines = HAPAG_LINES.filter((l) => l.category === cat);
               if (!lines || lines.length === 0) return null;
               const tone = CATEGORY_TONE[cat];
               const subTotalInOutput = lines.reduce((n, l) => {
@@ -1013,6 +1188,48 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
                 </div>
               );
             })}
+                </div>
+              );
+            })}
+
+            {/* Display options - per-customer-view toggles */}
+            <div className="px-5 py-3 border-t bg-zinc-50 space-y-1.5">
+              <div className="text-[11px] uppercase tracking-wide text-zinc-500 mb-1">
+                Customer view options
+              </div>
+              <label className="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showMacroGroups}
+                  onChange={(e) => setShowMacroGroups(e.target.checked)}
+                  className="size-3.5 accent-violet-600"
+                />
+                Show macro-group sections (Origin and EXW / Freight / Destination)
+              </label>
+              <label className="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showCurrencySubtotals}
+                  onChange={(e) => setShowCurrencySubtotals(e.target.checked)}
+                  className="size-3.5 accent-violet-600"
+                />
+                Show per-currency subtotals inside each section
+              </label>
+              <label className="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showCurrencyTotals}
+                  onChange={(e) => setShowCurrencyTotals(e.target.checked)}
+                  className="size-3.5 accent-violet-600"
+                />
+                Show charges-by-currency summary at the end
+              </label>
+              <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-not-allowed">
+                <input type="checkbox" checked disabled className="size-3.5" />
+                Show all-in total in {outputCurrency}{" "}
+                <span className="text-[10px]">(always shown)</span>
+              </label>
+            </div>
           </div>
 
           {/* CUSTOMER VIEW */}
@@ -1024,49 +1241,117 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
               </div>
             </div>
             <div className="px-5 py-4">
-              <div className="bg-white border rounded p-4 space-y-2 text-xs">
-                <div className="flex items-center justify-between text-zinc-500 text-[11px] uppercase tracking-wide pb-1 border-b">
-                  <span>Description</span>
-                  <span>{outputCurrency} amount</span>
-                </div>
-                {customerView.map((line, i) => (
-                  <div key={i} className="flex items-start justify-between gap-2 py-0.5">
-                    <span className="text-zinc-700">
-                      {line.label}
-                      {line.lines > 1 && (
-                        <span className="text-[10px] text-zinc-400 ml-1">
-                          ({line.lines} charges)
+              <div className="bg-white border rounded p-4 space-y-3 text-xs">
+                {/* Macro-group sections */}
+                {showMacroGroups ? (
+                  grouped.macros.map((mb) => (
+                    <div key={mb.group} className="space-y-1">
+                      <div
+                        className={`text-[10px] uppercase tracking-wide font-semibold border-l-4 ${MACRO_GROUP_TONE[mb.group]} pl-2 py-0.5`}
+                      >
+                        {MACRO_GROUP_LABEL[mb.group]}
+                      </div>
+                      {mb.currencies.map((cb) => (
+                        <div key={cb.currency} className="space-y-0.5 pl-2">
+                          {cb.lines.map(({ line, sellNative }, i) => {
+                            const s = state[line.id];
+                            // Use consolidated label when set; otherwise the
+                            // line's own description.
+                            const label = s.consolidateAs ?? line.description;
+                            return (
+                              <div
+                                key={`${line.id}-${i}`}
+                                className="flex items-start justify-between gap-2"
+                              >
+                                <span className="text-zinc-700">{label}</span>
+                                <span className="font-mono text-zinc-700">
+                                  {fmtCurrency(sellNative, cb.currency)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                          {showCurrencySubtotals && cb.lines.length > 1 && (
+                            <div className="flex items-start justify-between gap-2 pt-0.5 text-[11px] text-zinc-500 italic">
+                              <span>{cb.currency} subtotal</span>
+                              <span className="font-mono">
+                                {fmtCurrency(cb.sellNative, cb.currency)}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      <div className="flex items-start justify-between gap-2 pt-1 border-t border-dashed border-zinc-200 font-medium">
+                        <span>{MACRO_GROUP_LABEL[mb.group]} total</span>
+                        <span className="font-mono">
+                          {fmtCurrency(mb.sellOutput, outputCurrency)}
                         </span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  // Flat - no macro headers
+                  <div className="space-y-1">
+                    {grouped.macros
+                      .flatMap((m) => m.currencies)
+                      .flatMap((cb) =>
+                        cb.lines.map(({ line, sellNative }) => {
+                          const s = state[line.id];
+                          const label = s.consolidateAs ?? line.description;
+                          return (
+                            <div
+                              key={line.id}
+                              className="flex items-start justify-between gap-2"
+                            >
+                              <span className="text-zinc-700">{label}</span>
+                              <span className="font-mono text-zinc-700">
+                                {fmtCurrency(sellNative, cb.currency)}
+                              </span>
+                            </div>
+                          );
+                        }),
                       )}
-                    </span>
-                    <span className="font-mono">{fmtCurrency(line.sell, outputCurrency)}</span>
                   </div>
-                ))}
-                <Separator />
-                <div className="flex items-start justify-between font-medium">
+                )}
+
+                {/* Charges by currency summary */}
+                {showCurrencyTotals && grouped.currencyTotals.length > 1 && (
+                  <div className="pt-2 border-t space-y-0.5">
+                    <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
+                      Charges by currency
+                    </div>
+                    {grouped.currencyTotals.map((ct) => (
+                      <div
+                        key={ct.currency}
+                        className="flex items-start justify-between gap-2"
+                      >
+                        <span className="text-zinc-700">
+                          {ct.currency} charges
+                        </span>
+                        <span className="font-mono">
+                          {fmtCurrency(ct.sellNative, ct.currency)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* All-in total */}
+                <div className="pt-2 border-t flex items-start justify-between gap-2 font-medium text-sm">
                   <span>Total all-in ({outputCurrency})</span>
-                  <span className="font-mono">{fmtCurrency(totals.sell, outputCurrency)}</span>
+                  <span className="font-mono">
+                    {fmtCurrency(totals.sell, outputCurrency)}
+                  </span>
                 </div>
                 <div className="flex items-start justify-between text-[10px] text-zinc-500 pt-1">
                   <span>Quote valid until</span>
                   <span className="font-mono">{validUntilDisplay}</span>
                 </div>
                 <div className="text-[10px] text-zinc-400 italic pt-1 leading-relaxed">
-                  Charges are originally invoiced in their respective
-                  currencies (USD ocean freight, GBP UK local, etc.) and
-                  converted at today's mid-market rate. Total is binding
-                  in {outputCurrency} until the validity date above.
+                  Charges originally invoiced in their respective
+                  currencies. Converted at today's mid-market rate.
+                  Total is binding in {outputCurrency} until the
+                  validity date above.
                 </div>
-              </div>
-
-              <div className="text-[11px] text-zinc-500 mt-3 leading-relaxed">
-                Lines marked hidden are kept on file for audit / margin
-                analysis but never shown to the customer. Consolidated
-                lines are summed in {outputCurrency} and shown under the
-                group label only. FX rates from XE / fallback sources
-                stored in <span className="font-mono">geo.fx_rates</span>;{" "}
-                <span className="font-mono">geo.convert_amount()</span> handles
-                the lookup.
               </div>
             </div>
           </div>
