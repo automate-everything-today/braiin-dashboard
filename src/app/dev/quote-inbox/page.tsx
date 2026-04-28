@@ -34,8 +34,10 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  Coins,
   Filter,
   HandHelping,
+  HelpCircle,
   Inbox,
   Layers,
   Mail,
@@ -44,6 +46,7 @@ import {
   Send,
   Sparkles,
   Star,
+  Truck,
   X,
   Zap,
 } from "lucide-react";
@@ -866,6 +869,366 @@ Rob`}
 }
 
 // ============================================================
+// Slide-out: Provide input (needs_input rows)
+// ============================================================
+
+const KIND_ICON: Record<InputKind, typeof Truck> = {
+  delivery_rate: Truck,
+  haulage: Truck,
+  spot_rate: Coins,
+  question: HelpCircle,
+  other: Layers,
+};
+
+const KIND_TONE: Record<InputKind, string> = {
+  delivery_rate: "border-l-amber-300",
+  haulage: "border-l-amber-300",
+  spot_rate: "border-l-cyan-300",
+  question: "border-l-violet-300",
+  other: "border-l-zinc-300",
+};
+
+interface ProvideInputPanelProps {
+  row: InboxRow | null;
+  onClose: () => void;
+}
+
+type InputResolution = {
+  state: "open" | "answered" | "cancelled";
+  // delivery_rate / spot_rate / haulage answer fields
+  amount?: string;
+  currency?: string;
+  carrier?: string;
+  validUntil?: string;
+  // question answer
+  answer?: string;
+  // common
+  notes?: string;
+};
+
+function ProvideInputPanel({ row, onClose }: ProvideInputPanelProps) {
+  const inputs = row?.pendingInputs ?? [];
+
+  const [resolutions, setResolutions] = useState<Record<number, InputResolution>>(
+    () => inputs.reduce((acc, _, i) => ({ ...acc, [i]: { state: "open" } }), {}),
+  );
+
+  // Reset state when the row changes (different draft selected).
+  // Cheap key: row id + pending count.
+  const rowKey = row ? `${row.id}-${inputs.length}` : "";
+  const [boundKey, setBoundKey] = useState(rowKey);
+  if (rowKey !== boundKey) {
+    setBoundKey(rowKey);
+    setResolutions(inputs.reduce((acc, _, i) => ({ ...acc, [i]: { state: "open" } }), {}));
+  }
+
+  if (!row) return null;
+
+  function update(i: number, patch: Partial<InputResolution>) {
+    setResolutions((s) => ({ ...s, [i]: { ...s[i], ...patch } }));
+  }
+
+  function markAnswered(i: number) {
+    setResolutions((s) => ({ ...s, [i]: { ...s[i], state: "answered" } }));
+  }
+
+  function markCancelled(i: number) {
+    setResolutions((s) => ({ ...s, [i]: { ...s[i], state: "cancelled" } }));
+  }
+
+  function reopen(i: number) {
+    setResolutions((s) => ({ ...s, [i]: { ...s[i], state: "open" } }));
+  }
+
+  const allResolved = Object.values(resolutions).every(
+    (r) => r.state === "answered" || r.state === "cancelled",
+  );
+  const answeredCount = Object.values(resolutions).filter((r) => r.state === "answered").length;
+  const openCount = Object.values(resolutions).filter((r) => r.state === "open").length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div
+        className="flex-1 bg-zinc-900/30 backdrop-blur-[1px]"
+        onClick={onClose}
+      />
+      <div className="w-[640px] bg-white border-l border-zinc-200 flex flex-col shadow-2xl">
+        {/* Header */}
+        <div className="border-b px-5 py-4 flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
+              <HandHelping className="size-3.5 text-orange-600" />
+              Provide input
+              <span className="text-zinc-300">·</span>
+              <span className="font-mono">{row.id}</span>
+            </div>
+            <div className="font-medium">{row.customer}</div>
+            <div className="text-xs text-zinc-600 mt-1 flex items-center gap-2">
+              <span className="font-mono">{row.origin}</span>
+              <ArrowRight className="size-3 text-zinc-400" />
+              <span className="font-mono">{row.destination}</span>
+              <span className="text-zinc-400">·</span>
+              <span>{row.mode}</span>
+              {row.equipment && (
+                <>
+                  <span className="text-zinc-400">·</span>
+                  <span>{row.equipment}</span>
+                </>
+              )}
+            </div>
+          </div>
+          <Button size="sm" variant="ghost" onClick={onClose} className="size-8 p-0">
+            <X className="size-4" />
+          </Button>
+        </div>
+
+        {/* Banner */}
+        <div className="px-5 py-3 bg-orange-50/60 border-b border-orange-100">
+          <div className="flex items-start gap-2 text-xs text-zinc-700">
+            <HandHelping className="size-4 text-orange-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-medium text-orange-900 mb-0.5">
+                {inputs.length} open input{inputs.length === 1 ? "" : "s"} blocking this draft
+              </div>
+              <div className="text-zinc-600 leading-relaxed">
+                Resolve every input or cancel it as no-longer-needed. Once all are
+                handled, the draft flips back to{" "}
+                <span className="font-mono text-zinc-700">sourcing</span> automatically.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Inputs */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          {inputs.map((p, i) => {
+            const res = resolutions[i] ?? { state: "open" };
+            const Icon = KIND_ICON[p.kind] ?? HelpCircle;
+            const tone = KIND_TONE[p.kind] ?? "border-l-zinc-300";
+
+            return (
+              <div
+                key={i}
+                className={`border rounded-md border-l-4 ${tone} bg-white ${
+                  res.state === "answered" ? "opacity-60" : ""
+                } ${res.state === "cancelled" ? "opacity-40" : ""}`}
+              >
+                {/* Top: kind, status, asked-of, asked-at */}
+                <div className="px-4 py-3 flex items-start justify-between gap-3 border-b">
+                  <div className="flex items-start gap-2">
+                    <Icon className="size-4 text-zinc-600 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-sm font-medium flex items-center gap-2">
+                        {INPUT_KIND_LABEL[p.kind]}
+                        {res.state === "answered" && (
+                          <Badge className="bg-emerald-100 text-emerald-800 text-[9px] uppercase tracking-wide">
+                            answered
+                          </Badge>
+                        )}
+                        {res.state === "cancelled" && (
+                          <Badge className="bg-zinc-200 text-zinc-600 text-[9px] uppercase tracking-wide">
+                            cancelled
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="text-xs text-zinc-600 mt-1 leading-relaxed">
+                        {p.description}
+                      </div>
+                      <div className="text-[11px] text-zinc-500 mt-1.5 flex items-center gap-2">
+                        {p.askedOf && (
+                          <span>
+                            asked of <span className="text-zinc-700 font-medium">{p.askedOf}</span>
+                          </span>
+                        )}
+                        <span className="text-zinc-300">·</span>
+                        <span>raised {formatTime(p.askedAt)} ago</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Body: answer fields, kind-specific */}
+                {res.state === "open" && (
+                  <div className="px-4 py-3 space-y-3">
+                    {(p.kind === "delivery_rate" ||
+                      p.kind === "haulage" ||
+                      p.kind === "spot_rate") && (
+                      <div className="grid grid-cols-12 gap-2">
+                        <div className="col-span-3">
+                          <label className="text-[10px] uppercase tracking-wide text-zinc-500">
+                            Currency
+                          </label>
+                          <select
+                            value={res.currency ?? "GBP"}
+                            onChange={(e) => update(i, { currency: e.target.value })}
+                            className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+                          >
+                            <option value="GBP">GBP £</option>
+                            <option value="EUR">EUR €</option>
+                            <option value="USD">USD $</option>
+                          </select>
+                        </div>
+                        <div className="col-span-4">
+                          <label className="text-[10px] uppercase tracking-wide text-zinc-500">
+                            Amount (cost)
+                          </label>
+                          <input
+                            type="number"
+                            placeholder="0.00"
+                            value={res.amount ?? ""}
+                            onChange={(e) => update(i, { amount: e.target.value })}
+                            className="w-full h-9 px-2 rounded border border-zinc-300 text-sm font-mono"
+                          />
+                        </div>
+                        <div className="col-span-5">
+                          <label className="text-[10px] uppercase tracking-wide text-zinc-500">
+                            Carrier / supplier
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. Maritime Transport"
+                            value={res.carrier ?? ""}
+                            onChange={(e) => update(i, { carrier: e.target.value })}
+                            className="w-full h-9 px-2 rounded border border-zinc-300 text-sm"
+                          />
+                        </div>
+                        <div className="col-span-12">
+                          <label className="text-[10px] uppercase tracking-wide text-zinc-500">
+                            Valid until
+                          </label>
+                          <input
+                            type="date"
+                            value={res.validUntil ?? ""}
+                            onChange={(e) => update(i, { validUntil: e.target.value })}
+                            className="w-full h-9 px-2 rounded border border-zinc-300 text-sm"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {p.kind === "question" && (
+                      <textarea
+                        placeholder="Answer here..."
+                        rows={4}
+                        value={res.answer ?? ""}
+                        onChange={(e) => update(i, { answer: e.target.value })}
+                        className="w-full px-3 py-2 rounded border border-zinc-300 text-sm leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-orange-200"
+                      />
+                    )}
+
+                    {p.kind === "other" && (
+                      <textarea
+                        placeholder="Resolution notes..."
+                        rows={3}
+                        value={res.notes ?? ""}
+                        onChange={(e) => update(i, { notes: e.target.value })}
+                        className="w-full px-3 py-2 rounded border border-zinc-300 text-sm leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-orange-200"
+                      />
+                    )}
+
+                    <div className="flex items-center justify-between gap-2 pt-1">
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" variant="ghost" className="h-7 text-xs">
+                          Reassign
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs text-zinc-500"
+                          onClick={() => markCancelled(i)}
+                        >
+                          No longer needed
+                        </Button>
+                      </div>
+                      <Button
+                        size="sm"
+                        className="h-7 text-xs bg-orange-600 hover:bg-orange-700"
+                        onClick={() => markAnswered(i)}
+                      >
+                        Mark answered
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Resolved summary line + reopen */}
+                {res.state !== "open" && (
+                  <div className="px-4 py-2 flex items-center justify-between text-xs text-zinc-600">
+                    <div>
+                      {res.state === "answered" && (
+                        <>
+                          {(p.kind === "delivery_rate" ||
+                            p.kind === "haulage" ||
+                            p.kind === "spot_rate") &&
+                          res.amount ? (
+                            <span>
+                              <span className="font-mono">
+                                {res.currency ?? "GBP"} {res.amount}
+                              </span>
+                              {res.carrier && <> via {res.carrier}</>}
+                              {res.validUntil && <> · valid {res.validUntil}</>}
+                            </span>
+                          ) : p.kind === "question" && res.answer ? (
+                            <span className="line-clamp-2">{res.answer}</span>
+                          ) : (
+                            <span className="italic">marked answered</span>
+                          )}
+                        </>
+                      )}
+                      {res.state === "cancelled" && (
+                        <span className="italic">cancelled - no longer needed</span>
+                      )}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 text-[11px]"
+                      onClick={() => reopen(i)}
+                    >
+                      Reopen
+                    </Button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          <div className="flex items-start gap-2 text-xs text-zinc-500 bg-zinc-50 border rounded p-3">
+            <Sparkles className="size-3.5 text-violet-600 shrink-0 mt-0.5" />
+            <div>
+              When all open inputs are resolved or cancelled, this draft flips back to{" "}
+              <span className="font-mono">{row.pendingInputs ? "sourcing" : "ready"}</span>{" "}
+              automatically and any answered rates are merged into the live RFQ grid.
+              Decision-loop captures the operator answers so the AI learns when to ask.
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="border-t px-5 py-3 flex items-center justify-between bg-zinc-50">
+          <div className="text-xs text-zinc-500">
+            <span className="font-medium text-zinc-700">{answeredCount}</span> answered ·{" "}
+            <span className="font-medium text-zinc-700">{openCount}</span> open
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              Save &amp; close
+            </Button>
+            <Button
+              size="sm"
+              disabled={!allResolved}
+              className={allResolved ? "bg-emerald-600 hover:bg-emerald-700" : ""}
+            >
+              Resolve &amp; unblock
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // Header KPI cards
 // ============================================================
 
@@ -952,6 +1315,7 @@ export default function QuoteInboxPage() {
   const [query, setQuery] = useState("");
   const [sendRfqRow, setSendRfqRow] = useState<InboxRow | null>(null);
   const [askInfoRow, setAskInfoRow] = useState<InboxRow | null>(null);
+  const [provideInputRow, setProvideInputRow] = useState<InboxRow | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     "GRP-2026-0428-AP01": true, // expanded by default to demo the pattern
   });
@@ -1007,7 +1371,11 @@ export default function QuoteInboxPage() {
     }
     if (row.status === "needs_input") {
       return (
-        <Button size="sm" className="h-7 text-xs bg-orange-600 hover:bg-orange-700">
+        <Button
+          size="sm"
+          className="h-7 text-xs bg-orange-600 hover:bg-orange-700"
+          onClick={() => setProvideInputRow(row)}
+        >
           <HandHelping className="size-3 mr-1" />
           Provide input
         </Button>
@@ -1496,6 +1864,7 @@ export default function QuoteInboxPage() {
         {/* Slide-out panels */}
         <SendRfqPanel row={sendRfqRow} onClose={() => setSendRfqRow(null)} />
         <AskInfoPanel row={askInfoRow} onClose={() => setAskInfoRow(null)} />
+        <ProvideInputPanel row={provideInputRow} onClose={() => setProvideInputRow(null)} />
       </div>
     </PageGuard>
   );
