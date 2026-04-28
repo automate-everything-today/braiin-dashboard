@@ -523,6 +523,11 @@ const INPUT_KIND_LABEL: Record<InputKind, string> = {
   other: "Other",
 };
 
+// Common small-pill class used everywhere a Badge appears. Tighter
+// padding + 10px text + reduced height so pills don't shout next to
+// the action column.
+const PILL_SM = "text-[10px] px-1.5 py-0 leading-[18px] h-[18px] font-normal tracking-normal";
+
 // ============================================================
 // Helpers
 // ============================================================
@@ -1417,9 +1422,9 @@ export default function QuoteInboxPage() {
     setExpanded((s) => ({ ...s, [id]: !s[id] }));
   }
 
-  // Larger, full-width action button. Lives in the leftmost column so it's
-  // the first thing the operator's eye lands on. Each status has a single
-  // primary CTA - no hidden options.
+  // Leftmost column. The action's hue + label IS the status - no separate
+  // pill. For terminal states (won / lost / expired) where there's nothing
+  // for the operator to do, returns a small status pill instead.
   function actionFor(row: InboxRow) {
     const baseCls = "h-8 w-full justify-start text-xs font-medium";
     if (row.status === "new" || row.status === "gathering") {
@@ -1503,10 +1508,12 @@ export default function QuoteInboxPage() {
         </Button>
       );
     }
+    // Terminal states: no action, just a small status pill so the column
+    // still tells the operator what happened to this row.
     return (
-      <Button size="sm" variant="ghost" className={`${baseCls} text-zinc-400`}>
-        Open
-      </Button>
+      <Badge className={`${STATUS_TONE[row.status]} ${PILL_SM} px-2`}>
+        {STATUS_LABEL[row.status]}
+      </Badge>
     );
   }
 
@@ -1519,7 +1526,7 @@ export default function QuoteInboxPage() {
             <div className="flex items-center gap-3">
               <Inbox className="size-5 text-zinc-600" />
               <h1 className="text-lg font-medium">RFQ inbox</h1>
-              <Badge className="bg-zinc-100 text-zinc-600 font-mono text-[10px]">
+              <Badge className={`${PILL_SM} bg-zinc-100 text-zinc-600 font-mono`}>
                 /quotes
               </Badge>
             </div>
@@ -1599,17 +1606,16 @@ export default function QuoteInboxPage() {
             <CardContent className="pt-0">
               <Table>
                 <TableHeader>
-                  <TableRow className="text-[11px] uppercase tracking-wide">
+                  <TableRow className="text-[10px] uppercase tracking-wide">
                     <TableHead className="w-[180px]">Action</TableHead>
-                    <TableHead className="w-[120px]">Status</TableHead>
                     <TableHead>Customer &amp; lane</TableHead>
                     <TableHead className="w-[140px]">Mode</TableHead>
-                    <TableHead className="w-[110px]">
+                    <TableHead className="w-[100px]">
                       <span className="inline-flex items-center gap-1">
                         <Clock className="size-3" /> Time
                       </span>
                     </TableHead>
-                    <TableHead className="w-[260px]">Detail</TableHead>
+                    <TableHead className="w-[280px]">Detail</TableHead>
                     <TableHead className="w-[40px] text-right"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1664,22 +1670,22 @@ export default function QuoteInboxPage() {
                             )}
                           </TableCell>
 
-                          {/* Status (group summary) */}
+                          {/* Customer + lane (with sibling-group badge inline) */}
                           <TableCell>
-                            <Badge className="bg-violet-100 text-violet-800 text-[10px] uppercase tracking-wide flex items-center gap-1 w-fit">
-                              <Layers className="size-2.5" />
-                              {g.children.length} options
-                            </Badge>
-                            {needsReview && (
-                              <span className="inline-block mt-1 px-1.5 py-0.5 bg-orange-100 text-orange-800 rounded text-[9px] uppercase tracking-wide">
-                                needs review
-                              </span>
-                            )}
-                          </TableCell>
-
-                          {/* Customer + lane */}
-                          <TableCell>
-                            <div className="font-medium text-sm">{g.customer}</div>
+                            <div className="flex items-center gap-2">
+                              <div className="font-medium text-sm">{g.customer}</div>
+                              <Badge
+                                className={`${PILL_SM} bg-violet-100 text-violet-800 inline-flex items-center gap-1`}
+                              >
+                                <Layers className="size-2.5" />
+                                {g.children.length} options
+                              </Badge>
+                              {needsReview && (
+                                <Badge className={`${PILL_SM} bg-orange-100 text-orange-800`}>
+                                  needs review
+                                </Badge>
+                              )}
+                            </div>
                             <div className="flex items-center gap-1.5 text-[12px] font-mono text-zinc-700 mt-0.5">
                               <span>{g.origin}</span>
                               <ArrowRight className="size-3 text-zinc-400" />
@@ -1767,13 +1773,6 @@ export default function QuoteInboxPage() {
                               <div className="pl-4">{actionFor(c)}</div>
                             </TableCell>
 
-                            {/* Status */}
-                            <TableCell>
-                              <Badge className={STATUS_TONE[c.status]}>
-                                {STATUS_LABEL[c.status]}
-                              </Badge>
-                            </TableCell>
-
                             {/* Sibling intent + ID */}
                             <TableCell>
                               <div className="text-sm flex items-center gap-2">
@@ -1852,13 +1851,6 @@ export default function QuoteInboxPage() {
                     <TableRow key={r.id} className="hover:bg-zinc-50 cursor-pointer">
                       {/* Action */}
                       <TableCell>{actionFor(r)}</TableCell>
-
-                      {/* Status */}
-                      <TableCell>
-                        <Badge className={STATUS_TONE[r.status]}>
-                          {STATUS_LABEL[r.status]}
-                        </Badge>
-                      </TableCell>
 
                       {/* Customer + lane */}
                       <TableCell>
