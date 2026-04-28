@@ -663,91 +663,106 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
           </Button>
         </div>
 
-        {/* Quote-level controls strip - currency + validity */}
-        <div className="px-5 py-3 grid grid-cols-12 gap-3 border-b bg-zinc-50 items-end">
-          {/* Output currency */}
-          <div className="col-span-3">
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
-              Quote in
-            </div>
-            <div className="flex items-center gap-1">
-              {(["GBP", "USD", "EUR", "AUD"] as Currency[]).map((c) => (
-                <button
-                  key={c}
-                  onClick={() => setOutputCurrency(c)}
-                  className={`h-7 px-2 rounded text-xs font-mono border ${
-                    outputCurrency === c
-                      ? "bg-zinc-900 text-white border-zinc-900"
-                      : "bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-100"
-                  }`}
-                >
-                  {CURRENCY_SYMBOL[c]} {c}
-                </button>
-              ))}
-            </div>
-            <div className="text-[10px] text-zinc-400 mt-1 inline-flex items-center gap-1">
-              <Sparkles className="size-2.5 text-violet-600" />
-              FX from XE · {FX_AS_OF}
-            </div>
-          </div>
+        {/* Quote-level controls + totals - single compact row */}
+        <div className="px-5 py-2.5 border-b bg-zinc-50">
+          <div className="flex items-center gap-4 flex-wrap">
+            {/* Output currency */}
+            <label className="inline-flex items-center gap-1.5 text-xs text-zinc-700">
+              <span className="text-[10px] uppercase tracking-wide text-zinc-500">
+                Quote in
+              </span>
+              <select
+                value={outputCurrency}
+                onChange={(e) => setOutputCurrency(e.target.value as Currency)}
+                className="h-7 px-1.5 rounded border border-zinc-300 text-xs font-medium bg-white"
+              >
+                {(["GBP", "USD", "EUR", "AUD"] as Currency[]).map((c) => (
+                  <option key={c} value={c}>
+                    {c} {CURRENCY_SYMBOL[c]}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          {/* Validity */}
-          <div className="col-span-4">
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
-              Quote valid for
-            </div>
-            <div className="flex items-center gap-1">
-              {([7, 14, 21, 30] as const).map((d) => (
-                <button
-                  key={d}
-                  onClick={() => {
-                    setValidityMode("days");
-                    setValidityDays(d);
-                  }}
-                  className={`h-7 px-2 rounded text-xs border ${
-                    validityMode === "days" && validityDays === d
-                      ? "bg-zinc-900 text-white border-zinc-900"
-                      : "bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-100"
-                  }`}
-                >
-                  {d} days
-                </button>
-              ))}
-              <span className="text-zinc-300 mx-1">or</span>
-              <input
-                type="date"
-                value={validityDate}
+            {/* Validity */}
+            <label className="inline-flex items-center gap-1.5 text-xs text-zinc-700">
+              <span className="text-[10px] uppercase tracking-wide text-zinc-500">
+                Valid for
+              </span>
+              <select
+                value={validityMode === "date" ? "custom" : String(validityDays)}
                 onChange={(e) => {
-                  setValidityDate(e.target.value);
-                  setValidityMode("date");
+                  if (e.target.value === "custom") {
+                    setValidityMode("date");
+                  } else {
+                    setValidityMode("days");
+                    setValidityDays(Number(e.target.value) as 7 | 14 | 21 | 30);
+                  }
                 }}
-                className={`h-7 px-1 rounded text-xs border ${
-                  validityMode === "date"
-                    ? "border-zinc-900 ring-2 ring-zinc-200"
-                    : "border-zinc-300"
-                }`}
-              />
-            </div>
-            <div className="text-[10px] text-zinc-500 mt-1">
-              Customer sees: <span className="font-mono">{validUntilDisplay}</span>
-            </div>
-          </div>
+                className="h-7 px-1.5 rounded border border-zinc-300 text-xs bg-white"
+              >
+                <option value="7">7 days</option>
+                <option value="14">14 days</option>
+                <option value="21">21 days</option>
+                <option value="30">30 days</option>
+                <option value="custom">Custom date</option>
+              </select>
+              {validityMode === "date" ? (
+                <input
+                  type="date"
+                  value={validityDate}
+                  onChange={(e) => setValidityDate(e.target.value)}
+                  className="h-7 px-1 rounded border border-zinc-300 text-xs"
+                />
+              ) : (
+                <span className="text-[11px] text-zinc-500">
+                  until <span className="font-mono">{validUntilDisplay}</span>
+                </span>
+              )}
+            </label>
 
-          {/* Cost / Margin / Sell totals (in output currency) */}
-          <div className="col-span-2">
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Cost</div>
-            <div className="font-mono text-base">{fmtCurrency(totals.cost, outputCurrency)}</div>
-            <div className="text-[10px] text-zinc-500">in {outputCurrency}</div>
+            {/* Spacer pushes totals to the right */}
+            <div className="flex-1" />
+
+            {/* Cost / Margin / Sell - inline */}
+            <div className="inline-flex items-center gap-3 text-xs">
+              <div>
+                <span className="text-[10px] uppercase tracking-wide text-zinc-500 mr-1">
+                  Cost
+                </span>
+                <span className="font-mono text-zinc-700">
+                  {fmtCurrency(totals.cost, outputCurrency)}
+                </span>
+              </div>
+              <span className="text-zinc-300">·</span>
+              <div>
+                <span className="text-[10px] uppercase tracking-wide text-zinc-500 mr-1">
+                  Margin
+                </span>
+                <span className="font-mono text-emerald-700">
+                  +{totals.marginPct.toFixed(1)}%
+                </span>
+                <span className="text-[10px] text-zinc-400 ml-1">
+                  ({fmtCurrency(totals.margin, outputCurrency)})
+                </span>
+              </div>
+              <span className="text-zinc-300">·</span>
+              <div>
+                <span className="text-[10px] uppercase tracking-wide text-zinc-500 mr-1">
+                  Sell
+                </span>
+                <span className="font-mono text-base font-medium">
+                  {fmtCurrency(totals.sell, outputCurrency)}
+                </span>
+              </div>
+            </div>
           </div>
-          <div className="col-span-1">
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Margin</div>
-            <div className="font-mono text-base text-emerald-700">+{totals.marginPct.toFixed(1)}%</div>
-            <div className="text-[10px] text-zinc-500">{fmtCurrency(totals.margin, outputCurrency)}</div>
-          </div>
-          <div className="col-span-2">
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Sell</div>
-            <div className="font-mono text-base">{fmtCurrency(totals.sell, outputCurrency)}</div>
-            <div className="text-[10px] text-zinc-500">{customerView.length} customer line{customerView.length === 1 ? "" : "s"}</div>
+          <div className="text-[10px] text-zinc-400 mt-1 inline-flex items-center gap-1">
+            <Sparkles className="size-2.5 text-violet-600" />
+            FX from XE · {FX_AS_OF} ·{" "}
+            <span className="text-zinc-500">
+              {customerView.length} customer line{customerView.length === 1 ? "" : "s"} after hide / consolidate
+            </span>
           </div>
         </div>
 
