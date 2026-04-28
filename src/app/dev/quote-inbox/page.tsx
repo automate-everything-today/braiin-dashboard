@@ -43,6 +43,7 @@ import {
   Layers,
   Mail,
   Phone,
+  Plus,
   Search,
   Send,
   Sparkles,
@@ -629,15 +630,36 @@ interface SendRfqPanelProps {
   onClose: () => void;
 }
 
+// Operator-added carrier (not in the rolodex / scorecard system).
+// Mirrors what an inline form will write to partners.carriers when
+// the inbox is wired to the live API.
+interface ManualCarrier {
+  code: string;
+  name: string;
+  email: string;
+  mode: string;
+  saveToRolodex: boolean;
+  addedAt: number; // mock minutes-ago
+}
+
 function SendRfqPanel({ row, onClose }: SendRfqPanelProps) {
   const [showAll, setShowAll] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>(() =>
     SUGGESTED_CARRIERS.reduce((acc, c) => ({ ...acc, [c.code]: true }), {}),
   );
 
+  // Operator-added carriers. Always selected by default; un-checking
+  // removes them entirely.
+  const [manual, setManual] = useState<ManualCarrier[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [draftEmail, setDraftEmail] = useState("");
+  const [draftSave, setDraftSave] = useState(true);
+
   const list = showAll ? ALL_AIR_CARRIERS : SUGGESTED_CARRIERS;
 
-  const selectedCount = Object.values(selected).filter(Boolean).length;
+  const selectedAi = list.filter((c) => selected[c.code]).length;
+  const totalSelected = selectedAi + manual.length;
 
   function toggle(code: string) {
     setSelected((s) => ({ ...s, [code]: !s[code] }));
@@ -649,6 +671,30 @@ function SendRfqPanel({ row, onClose }: SendRfqPanelProps) {
       next[c.code] = !!c.customerNominated;
     }
     setSelected(next);
+  }
+
+  function commitManual() {
+    if (!draftName.trim()) return;
+    const code = `MAN-${manual.length + 1}`;
+    setManual((m) => [
+      ...m,
+      {
+        code,
+        name: draftName.trim(),
+        email: draftEmail.trim(),
+        mode: "Air",
+        saveToRolodex: draftSave,
+        addedAt: 0,
+      },
+    ]);
+    setDraftName("");
+    setDraftEmail("");
+    setDraftSave(true);
+    setAdding(false);
+  }
+
+  function removeManual(code: string) {
+    setManual((m) => m.filter((c) => c.code !== code));
   }
 
   if (!row) return null;
@@ -708,11 +754,12 @@ function SendRfqPanel({ row, onClose }: SendRfqPanelProps) {
             </div>
           </div>
 
-          {/* Carrier list */}
+          {/* AI-suggested carrier list */}
           <div className="px-5 py-4 space-y-1">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-[11px] uppercase tracking-wide text-zinc-500">
-                Carriers ({selectedCount} selected)
+              <div className="text-[11px] uppercase tracking-wide text-zinc-500 flex items-center gap-1.5">
+                <Sparkles className="size-3 text-violet-600" />
+                AI suggested ({selectedAi} of {list.length} selected)
               </div>
               <div className="flex items-center gap-2">
                 <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={pickNominated}>
@@ -741,7 +788,7 @@ function SendRfqPanel({ row, onClose }: SendRfqPanelProps) {
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium truncate">{c.name}</span>
                     {c.customerNominated && (
-                      <Badge className="bg-amber-100 text-amber-800 text-[9px] uppercase tracking-wide">
+                      <Badge className={`${PILL_SM} bg-amber-100 text-amber-800 uppercase tracking-wide`}>
                         nominated
                       </Badge>
                     )}
@@ -757,7 +804,7 @@ function SendRfqPanel({ row, onClose }: SendRfqPanelProps) {
                   </div>
                 </div>
                 <Badge
-                  className={`text-[10px] uppercase tracking-wide ${
+                  className={`${PILL_SM} uppercase tracking-wide ${
                     c.source === "API"
                       ? "bg-violet-100 text-violet-800"
                       : c.source === "Aggregator"
@@ -769,6 +816,133 @@ function SendRfqPanel({ row, onClose }: SendRfqPanelProps) {
                 </Badge>
               </label>
             ))}
+          </div>
+
+          {/* Operator-added carriers + add-new flow */}
+          <div className="px-5 py-4 border-t space-y-2">
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-[11px] uppercase tracking-wide text-zinc-500 flex items-center gap-1.5">
+                <Plus className="size-3 text-emerald-700" />
+                Manually added ({manual.length})
+              </div>
+              {!adding && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs border-emerald-300 text-emerald-800 hover:bg-emerald-50"
+                  onClick={() => setAdding(true)}
+                >
+                  <Plus className="size-3 mr-1" />
+                  Add carrier not on the list
+                </Button>
+              )}
+            </div>
+
+            {manual.map((c) => (
+              <div
+                key={c.code}
+                className="flex items-center gap-3 px-3 py-2 rounded border border-emerald-200 bg-emerald-50/40"
+              >
+                <Plus className="size-4 text-emerald-700 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium truncate">{c.name}</span>
+                    <Badge className={`${PILL_SM} bg-emerald-100 text-emerald-800 uppercase tracking-wide`}>
+                      manual
+                    </Badge>
+                    {c.saveToRolodex && (
+                      <Badge className={`${PILL_SM} bg-zinc-100 text-zinc-600 uppercase tracking-wide`}>
+                        save to rolodex
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-zinc-500 flex items-center gap-3 mt-0.5">
+                    <span className="font-mono">{c.email || "(no email yet)"}</span>
+                    <span>{c.mode}</span>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 size-7 p-0 text-zinc-400 hover:text-rose-600"
+                  onClick={() => removeManual(c.code)}
+                  title="Remove"
+                >
+                  <X className="size-3.5" />
+                </Button>
+              </div>
+            ))}
+
+            {adding && (
+              <div className="border rounded p-3 bg-emerald-50/30 border-emerald-200 space-y-2">
+                <div className="grid grid-cols-12 gap-2">
+                  <div className="col-span-6">
+                    <label className="text-[10px] uppercase tracking-wide text-zinc-500">
+                      Carrier / supplier name
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Bluewater Air Cargo"
+                      value={draftName}
+                      onChange={(e) => setDraftName(e.target.value)}
+                      autoFocus
+                      className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+                    />
+                  </div>
+                  <div className="col-span-6">
+                    <label className="text-[10px] uppercase tracking-wide text-zinc-500">
+                      Quotes email
+                    </label>
+                    <input
+                      type="email"
+                      placeholder="quotes@bluewater-air.com"
+                      value={draftEmail}
+                      onChange={(e) => setDraftEmail(e.target.value)}
+                      className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+                    />
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={draftSave}
+                    onChange={(e) => setDraftSave(e.target.checked)}
+                    className="size-4 accent-emerald-600"
+                  />
+                  Save to rolodex - AI starts grading them on this lane after the first reply
+                </label>
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs"
+                    onClick={() => {
+                      setAdding(false);
+                      setDraftName("");
+                      setDraftEmail("");
+                      setDraftSave(true);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700"
+                    disabled={!draftName.trim()}
+                    onClick={commitManual}
+                  >
+                    Add to RFQ
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {!adding && manual.length === 0 && (
+              <div className="text-[11px] text-zinc-400 italic px-3">
+                Have a contact AI doesn't know about? Add them inline - they ride
+                this RFQ and (optionally) become part of your rolodex for next time.
+              </div>
+            )}
           </div>
 
           {/* Email template */}
@@ -811,15 +985,24 @@ function SendRfqPanel({ row, onClose }: SendRfqPanelProps) {
         {/* Footer action bar */}
         <div className="border-t px-5 py-3 flex items-center justify-between bg-zinc-50">
           <div className="text-xs text-zinc-500">
-            Estimated responses: <span className="font-medium text-zinc-700">~6 of {selectedCount}</span> within 2h
+            <div>
+              <span className="font-medium text-zinc-700">{totalSelected}</span> total ·{" "}
+              <span className="text-violet-700">{selectedAi} AI</span>
+              {manual.length > 0 && (
+                <>
+                  {" "}+ <span className="text-emerald-700">{manual.length} manual</span>
+                </>
+              )}
+            </div>
+            <div className="text-[10px] text-zinc-400">~6 replies expected within 2h</div>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={onClose}>
               Cancel
             </Button>
-            <Button size="sm" disabled={selectedCount === 0}>
+            <Button size="sm" disabled={totalSelected === 0}>
               <Send className="size-3.5 mr-1.5" />
-              Send to {selectedCount} carriers
+              Send to {totalSelected} carriers
             </Button>
           </div>
         </div>

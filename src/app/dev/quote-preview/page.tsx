@@ -9,6 +9,7 @@
  * here is what the production page will look like.
  */
 
+import { useMemo, useState } from "react";
 import Image from "next/image";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -27,14 +28,19 @@ import {
   ArrowRight,
   CheckCircle2,
   Container,
+  Eye,
+  EyeOff,
   Mail,
+  Merge,
   Package,
+  Receipt,
   Ship,
   Sparkles,
   Star,
   TrendingUp,
   Truck,
   User,
+  X,
   XCircle,
 } from "lucide-react";
 
@@ -260,6 +266,459 @@ function PulsingBrain({ size = 24, message }: { size?: number; message?: string 
   );
 }
 
+// ============================================================
+// Quote breakdown - charge-line data + slide-in panel
+// ============================================================
+
+type ChargeCategory =
+  | "origin"
+  | "pickup"
+  | "freight"
+  | "surcharges"
+  | "destination"
+  | "delivery"
+  | "customs"
+  | "insurance"
+  | "other";
+
+interface ChargeLine {
+  id: string;
+  category: ChargeCategory;
+  code: string;
+  description: string;
+  costAmount: number;
+  currency: "GBP" | "USD" | "EUR";
+  // Defaults applied when the line is rendered. Operator can override
+  // any of these.
+  defaultMarginPct: number;
+  defaultVisible: boolean;
+  // Optional grouping label that consolidates this line under a
+  // single rolled-up entry on the customer view.
+  defaultConsolidateAs: string | null;
+}
+
+const CATEGORY_LABEL: Record<ChargeCategory, string> = {
+  origin: "Origin",
+  pickup: "Pickup / collection",
+  freight: "Freight",
+  surcharges: "Surcharges",
+  destination: "Destination",
+  delivery: "Delivery",
+  customs: "Customs",
+  insurance: "Insurance",
+  other: "Other",
+};
+
+const CATEGORY_TONE: Record<ChargeCategory, string> = {
+  origin: "border-l-amber-300",
+  pickup: "border-l-amber-300",
+  freight: "border-l-violet-300",
+  surcharges: "border-l-rose-300",
+  destination: "border-l-cyan-300",
+  delivery: "border-l-cyan-300",
+  customs: "border-l-emerald-300",
+  insurance: "border-l-zinc-300",
+  other: "border-l-zinc-300",
+};
+
+// Hapag-Lloyd Standard cost basis broken down to charge level.
+// Total cost £2,510 = sum of these lines.
+const HAPAG_LINES: ChargeLine[] = [
+  // Origin
+  { id: "ORG-THC", category: "origin", code: "THC", description: "Terminal handling - Felixstowe", costAmount: 195, currency: "GBP", defaultMarginPct: 14, defaultVisible: true, defaultConsolidateAs: "Origin charges" },
+  { id: "ORG-DOC", category: "origin", code: "DOC", description: "Documentation fee", costAmount: 60, currency: "GBP", defaultMarginPct: 14, defaultVisible: true, defaultConsolidateAs: "Origin charges" },
+  { id: "ORG-EXA", category: "origin", code: "EXA", description: "Container examination charge (UK)", costAmount: 25, currency: "GBP", defaultMarginPct: 14, defaultVisible: true, defaultConsolidateAs: "Origin charges" },
+  { id: "ORG-AMS", category: "origin", code: "AMS", description: "AMS / ENS filing fee", costAmount: 35, currency: "GBP", defaultMarginPct: 14, defaultVisible: false, defaultConsolidateAs: "Origin charges" },
+
+  // Pickup
+  { id: "PCK-HAUL", category: "pickup", code: "HAUL", description: "Haulage supplier door to FXT", costAmount: 220, currency: "GBP", defaultMarginPct: 14, defaultVisible: true, defaultConsolidateAs: null },
+
+  // Freight
+  { id: "FRT-OCEAN", category: "freight", code: "OCN", description: "Ocean freight - all-in basic", costAmount: 1320, currency: "GBP", defaultMarginPct: 12, defaultVisible: true, defaultConsolidateAs: null },
+
+  // Surcharges
+  { id: "SCH-BAF", category: "surcharges", code: "BAF", description: "Bunker adjustment factor", costAmount: 180, currency: "GBP", defaultMarginPct: 14, defaultVisible: false, defaultConsolidateAs: "Surcharges" },
+  { id: "SCH-LSF", category: "surcharges", code: "LSF", description: "Low sulphur fuel surcharge", costAmount: 75, currency: "GBP", defaultMarginPct: 14, defaultVisible: false, defaultConsolidateAs: "Surcharges" },
+  { id: "SCH-PSS", category: "surcharges", code: "PSS", description: "Peak season surcharge", costAmount: 90, currency: "GBP", defaultMarginPct: 14, defaultVisible: false, defaultConsolidateAs: "Surcharges" },
+  { id: "SCH-WAR", category: "surcharges", code: "WAR", description: "War risk / piracy surcharge", costAmount: 30, currency: "GBP", defaultMarginPct: 14, defaultVisible: false, defaultConsolidateAs: "Surcharges" },
+
+  // Destination
+  { id: "DST-THC", category: "destination", code: "DTHC", description: "Destination terminal handling - Shanghai", costAmount: 220, currency: "GBP", defaultMarginPct: 14, defaultVisible: true, defaultConsolidateAs: "Destination charges" },
+  { id: "DST-DOC", category: "destination", code: "DOC", description: "Destination documentation fee", costAmount: 45, currency: "GBP", defaultMarginPct: 14, defaultVisible: true, defaultConsolidateAs: "Destination charges" },
+
+  // Delivery (deliberately deferred - customer arranges import side)
+  // (none for this lane)
+
+  // Customs
+  { id: "CST-CLR", category: "customs", code: "CLR", description: "UK export customs clearance", costAmount: 15, currency: "GBP", defaultMarginPct: 14, defaultVisible: true, defaultConsolidateAs: null },
+];
+
+// ----- Charge state machine for the panel -----
+
+interface LineState {
+  marginPct: number;
+  visible: boolean;
+  consolidateAs: string | null;
+}
+
+function fmtCurrency(amount: number, currency: string) {
+  const sym = currency === "USD" ? "$" : currency === "EUR" ? "€" : "£";
+  return `${sym}${amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+}
+
+interface BreakdownPanelProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
+  const [state, setState] = useState<Record<string, LineState>>(() =>
+    HAPAG_LINES.reduce(
+      (acc, l) => ({
+        ...acc,
+        [l.id]: {
+          marginPct: l.defaultMarginPct,
+          visible: l.defaultVisible,
+          consolidateAs: l.defaultConsolidateAs,
+        },
+      }),
+      {},
+    ),
+  );
+
+  function update(id: string, patch: Partial<LineState>) {
+    setState((s) => ({ ...s, [id]: { ...s[id], ...patch } }));
+  }
+
+  // Operator-facing totals
+  const totals = useMemo(() => {
+    let cost = 0;
+    let sell = 0;
+    for (const l of HAPAG_LINES) {
+      const s = state[l.id];
+      cost += l.costAmount;
+      sell += l.costAmount * (1 + s.marginPct / 100);
+    }
+    const margin = sell - cost;
+    const marginPct = cost > 0 ? (margin / cost) * 100 : 0;
+    return { cost, sell, margin, marginPct };
+  }, [state]);
+
+  // Customer-facing rolled-up view: lines that are visible. Consolidated
+  // groups roll up cost and use the worst-case margin so the operator
+  // doesn't accidentally undersell.
+  const customerView = useMemo(() => {
+    interface OutLine {
+      label: string;
+      sell: number;
+      hiddenLineIds: string[];
+    }
+    const grouped = new Map<string, OutLine>();
+    const flat: OutLine[] = [];
+
+    for (const l of HAPAG_LINES) {
+      const s = state[l.id];
+      if (!s.visible) continue;
+      const sell = l.costAmount * (1 + s.marginPct / 100);
+      if (s.consolidateAs) {
+        const existing = grouped.get(s.consolidateAs);
+        if (existing) {
+          existing.sell += sell;
+          existing.hiddenLineIds.push(l.id);
+        } else {
+          const o: OutLine = {
+            label: s.consolidateAs,
+            sell,
+            hiddenLineIds: [l.id],
+          };
+          grouped.set(s.consolidateAs, o);
+          flat.push(o);
+        }
+      } else {
+        flat.push({ label: l.description, sell, hiddenLineIds: [l.id] });
+      }
+    }
+    return flat;
+  }, [state]);
+
+  if (!open) return null;
+
+  // Group lines by category for the operator view.
+  const byCategory = HAPAG_LINES.reduce(
+    (acc, l) => {
+      (acc[l.category] = acc[l.category] ?? []).push(l);
+      return acc;
+    },
+    {} as Record<ChargeCategory, ChargeLine[]>,
+  );
+
+  const orderedCategories: ChargeCategory[] = [
+    "origin",
+    "pickup",
+    "freight",
+    "surcharges",
+    "destination",
+    "delivery",
+    "customs",
+    "insurance",
+    "other",
+  ];
+
+  // Pre-existing consolidation labels - operator can pick from these or type new
+  const existingGroups = Array.from(
+    new Set(HAPAG_LINES.map((l) => l.defaultConsolidateAs).filter(Boolean) as string[]),
+  );
+
+  const visibleCount = HAPAG_LINES.filter((l) => state[l.id].visible).length;
+  const hiddenCount = HAPAG_LINES.length - visibleCount;
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div
+        className="flex-1 bg-zinc-900/30 backdrop-blur-[1px]"
+        onClick={onClose}
+      />
+      <div className="w-[860px] bg-white border-l border-zinc-200 flex flex-col shadow-2xl">
+        {/* Header */}
+        <div className="border-b px-5 py-4 flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
+              <Receipt className="size-3.5 text-zinc-700" />
+              Quote breakdown
+              <span className="text-zinc-300">·</span>
+              <span className="font-mono">Hapag-Lloyd Standard · BR-2026-0428-1234</span>
+            </div>
+            <div className="font-medium">
+              GBFXT <span className="text-zinc-400 mx-1">→</span> CNSHA · 2× 40HC
+            </div>
+            <div className="text-xs text-zinc-600 mt-1 flex items-center gap-3">
+              <span>{HAPAG_LINES.length} charge lines</span>
+              <span className="text-zinc-300">·</span>
+              <span>
+                <span className="text-emerald-700 font-medium">{visibleCount}</span> visible
+              </span>
+              <span className="text-zinc-300">·</span>
+              <span>
+                <span className="text-zinc-500">{hiddenCount}</span> hidden
+              </span>
+            </div>
+          </div>
+          <Button size="sm" variant="ghost" onClick={onClose} className="size-8 p-0">
+            <X className="size-4" />
+          </Button>
+        </div>
+
+        {/* Top totals strip */}
+        <div className="px-5 py-3 grid grid-cols-4 gap-3 border-b bg-zinc-50">
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Cost</div>
+            <div className="font-mono text-lg">{fmtCurrency(totals.cost, "GBP")}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Margin</div>
+            <div className="font-mono text-lg text-emerald-700">
+              +{totals.marginPct.toFixed(1)}%
+            </div>
+            <div className="text-[10px] text-zinc-500">{fmtCurrency(totals.margin, "GBP")} GP</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">Sell</div>
+            <div className="font-mono text-lg">{fmtCurrency(totals.sell, "GBP")}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+              Customer sees
+            </div>
+            <div className="font-mono text-lg">{customerView.length} line{customerView.length === 1 ? "" : "s"}</div>
+            <div className="text-[10px] text-zinc-500">after hide / consolidate</div>
+          </div>
+        </div>
+
+        {/* Two-column body */}
+        <div className="flex-1 overflow-y-auto grid grid-cols-12 gap-0">
+          {/* OPERATOR VIEW */}
+          <div className="col-span-7 border-r overflow-y-auto">
+            <div className="px-5 py-3 border-b bg-white sticky top-0 z-10">
+              <div className="text-[11px] uppercase tracking-wide text-zinc-500 flex items-center gap-1.5">
+                <Sparkles className="size-3 text-violet-600" />
+                Operator detail · {HAPAG_LINES.length} lines
+              </div>
+            </div>
+
+            {orderedCategories.map((cat) => {
+              const lines = byCategory[cat];
+              if (!lines || lines.length === 0) return null;
+              const tone = CATEGORY_TONE[cat];
+              const subTotal = lines.reduce((n, l) => n + l.costAmount, 0);
+
+              return (
+                <div key={cat} className="px-5 py-3 border-b">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className={`text-xs font-medium border-l-4 ${tone} pl-2 text-zinc-800`}>
+                      {CATEGORY_LABEL[cat]}
+                    </div>
+                    <div className="text-[11px] text-zinc-500 font-mono">
+                      {fmtCurrency(subTotal, "GBP")}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    {lines.map((l) => {
+                      const s = state[l.id];
+                      const sell = l.costAmount * (1 + s.marginPct / 100);
+                      return (
+                        <div
+                          key={l.id}
+                          className={`grid grid-cols-12 gap-2 items-center text-xs px-2 py-1.5 rounded ${
+                            !s.visible ? "opacity-50 bg-zinc-50" : "hover:bg-zinc-50"
+                          }`}
+                        >
+                          <div className="col-span-5">
+                            <div className="flex items-center gap-1.5">
+                              <Badge
+                                className={`${PILL_SM} bg-zinc-100 text-zinc-600 font-mono`}
+                              >
+                                {l.code}
+                              </Badge>
+                              <span className="text-zinc-700">{l.description}</span>
+                            </div>
+                            {s.consolidateAs && (
+                              <div className="text-[10px] text-violet-700 mt-0.5">
+                                ↳ rolled up as {s.consolidateAs}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="col-span-2 text-right font-mono text-zinc-600">
+                            {fmtCurrency(l.costAmount, l.currency)}
+                          </div>
+
+                          <div className="col-span-2 flex items-center gap-1">
+                            <input
+                              type="number"
+                              value={s.marginPct}
+                              step={0.5}
+                              onChange={(e) =>
+                                update(l.id, { marginPct: Number(e.target.value) })
+                              }
+                              className="w-14 h-7 px-1 text-right rounded border border-zinc-300 text-xs font-mono"
+                            />
+                            <span className="text-zinc-400 text-[11px]">%</span>
+                          </div>
+
+                          <div className="col-span-2 text-right font-mono text-emerald-700">
+                            {fmtCurrency(sell, l.currency)}
+                          </div>
+
+                          <div className="col-span-1 flex items-center justify-end gap-0.5">
+                            <button
+                              onClick={() => update(l.id, { visible: !s.visible })}
+                              title={s.visible ? "Hide from customer" : "Show to customer"}
+                              className={`size-6 rounded inline-flex items-center justify-center ${
+                                s.visible
+                                  ? "text-emerald-700 hover:bg-emerald-50"
+                                  : "text-zinc-400 hover:bg-zinc-100"
+                              }`}
+                            >
+                              {s.visible ? (
+                                <Eye className="size-3.5" />
+                              ) : (
+                                <EyeOff className="size-3.5" />
+                              )}
+                            </button>
+                            <button
+                              onClick={() => {
+                                const next =
+                                  s.consolidateAs === null
+                                    ? existingGroups[0] ?? "Group"
+                                    : null;
+                                update(l.id, { consolidateAs: next });
+                              }}
+                              title={
+                                s.consolidateAs
+                                  ? "Un-consolidate"
+                                  : "Roll into a group on the customer view"
+                              }
+                              className={`size-6 rounded inline-flex items-center justify-center ${
+                                s.consolidateAs
+                                  ? "text-violet-700 hover:bg-violet-50"
+                                  : "text-zinc-400 hover:bg-zinc-100"
+                              }`}
+                            >
+                              <Merge className="size-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* CUSTOMER VIEW */}
+          <div className="col-span-5 bg-zinc-50 overflow-y-auto">
+            <div className="px-5 py-3 border-b bg-white sticky top-0 z-10">
+              <div className="text-[11px] uppercase tracking-wide text-zinc-500 flex items-center gap-1.5">
+                <Eye className="size-3 text-emerald-700" />
+                Customer view (live preview)
+              </div>
+            </div>
+            <div className="px-5 py-4">
+              <div className="bg-white border rounded p-4 space-y-2 text-xs">
+                <div className="flex items-center justify-between text-zinc-500 text-[11px] uppercase tracking-wide pb-1 border-b">
+                  <span>Description</span>
+                  <span>Amount</span>
+                </div>
+                {customerView.map((line, i) => (
+                  <div key={i} className="flex items-start justify-between gap-2 py-0.5">
+                    <span className="text-zinc-700">{line.label}</span>
+                    <span className="font-mono">{fmtCurrency(line.sell, "GBP")}</span>
+                  </div>
+                ))}
+                <Separator />
+                <div className="flex items-start justify-between font-medium">
+                  <span>Total all-in</span>
+                  <span className="font-mono">{fmtCurrency(totals.sell, "GBP")}</span>
+                </div>
+                <div className="text-[10px] text-zinc-400 italic pt-1">
+                  Sample - exact wording matches the PDF / email cover.
+                </div>
+              </div>
+
+              <div className="text-[11px] text-zinc-500 mt-3 leading-relaxed">
+                Lines marked hidden are kept on file for audit / margin
+                analysis but never shown to the customer. Consolidated
+                lines are summed and shown under the group label only.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="border-t px-5 py-3 flex items-center justify-between bg-white">
+          <div className="text-xs text-zinc-500">
+            Saved as{" "}
+            <span className="font-mono">quotes.charge_lines</span> + per-line{" "}
+            <span className="font-mono">visible_to_customer</span> /{" "}
+            <span className="font-mono">consolidated_into_group</span> /{" "}
+            <span className="font-mono">margin_pct_override</span>.
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700">
+              Save breakdown
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SourceBadge({ source }: { source: RfqRow["source"] }) {
   const tone =
     source === "API"
@@ -273,6 +732,8 @@ function SourceBadge({ source }: { source: RfqRow["source"] }) {
 // ----------------- Page -----------------
 
 export default function QuotePreviewPage() {
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
+
   return (
     <PageGuard pageId="dev_quote_preview">
       <div className="min-h-screen bg-zinc-50">
@@ -616,7 +1077,18 @@ export default function QuotePreviewPage() {
 
                 <Separator />
 
-                <div className="text-[11px] uppercase tracking-wide text-zinc-500">Margin</div>
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] uppercase tracking-wide text-zinc-500">
+                    Margin
+                  </div>
+                  <button
+                    onClick={() => setBreakdownOpen(true)}
+                    className="text-[11px] text-emerald-700 hover:underline inline-flex items-center gap-1"
+                  >
+                    <Receipt className="size-3" />
+                    View full breakdown
+                  </button>
+                </div>
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <div className="border rounded p-2 bg-white">
                     <div className="text-[10px] text-zinc-500">Cost</div>
@@ -740,6 +1212,12 @@ export default function QuotePreviewPage() {
             Mono + pulsing brain loader · production page will look identical
           </div>
         </div>
+
+        {/* Slide-in: full quote breakdown */}
+        <BreakdownPanel
+          open={breakdownOpen}
+          onClose={() => setBreakdownOpen(false)}
+        />
       </div>
     </PageGuard>
   );
