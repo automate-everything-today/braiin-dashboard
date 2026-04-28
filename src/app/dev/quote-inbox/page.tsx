@@ -31,9 +31,12 @@ import { PageGuard } from "@/components/page-guard";
 import {
   ArrowDownUp,
   ArrowRight,
+  ChevronDown,
+  ChevronRight,
   Clock,
   Filter,
   Inbox,
+  Layers,
   Mail,
   Phone,
   Search,
@@ -79,7 +82,26 @@ interface InboxRow {
   topRecommendation?: string;
   margin?: string;
   missing?: string[];
+  // Sibling-group support: when N quote drafts come from one email
+  siblingIntent?: string; // e.g. "Express", "Standard", "LCL option"
 }
+
+interface SiblingGroup {
+  groupId: string;
+  customer: string;
+  customerYTD?: string;
+  origin: string;
+  destination: string;
+  source: SourceType;
+  sourceInbox?: string;
+  receivedAt: number;
+  splitConfidence: number; // 0-1, surfaced when AI made the split call
+  children: InboxRow[];
+}
+
+type InboxEntry =
+  | { kind: "single"; row: InboxRow }
+  | { kind: "group"; group: SiblingGroup };
 
 // "now" in mock minutes
 const ROWS: InboxRow[] = [
@@ -237,6 +259,122 @@ const ROWS: InboxRow[] = [
   },
 ];
 
+// Sibling group: customer asks for N quote options in one email.
+// AI splits into N sibling drafts that share a group_id but progress
+// through statuses independently. Parent row in inbox shows a summary,
+// children expand below.
+const SIBLING_GROUPS: SiblingGroup[] = [
+  {
+    groupId: "GRP-2026-0428-AP01",
+    customer: "Apex Pharma",
+    customerYTD: "£91k",
+    origin: "DEFRA",
+    destination: "USORD",
+    source: "email",
+    sourceInbox: "rob@",
+    receivedAt: 26,
+    splitConfidence: 0.94,
+    children: [
+      {
+        id: "BR-2026-0428-1244-1",
+        customer: "Apex Pharma",
+        customerYTD: "£91k",
+        origin: "DEFRA",
+        destination: "USORD",
+        mode: "Air",
+        equipment: "1,240 kg / 4.5 CBM",
+        status: "ready",
+        source: "email",
+        sourceInbox: "rob@",
+        enteredStateAt: 18,
+        receivedAt: 26,
+        siblingIntent: "Express",
+      },
+      {
+        id: "BR-2026-0428-1244-2",
+        customer: "Apex Pharma",
+        customerYTD: "£91k",
+        origin: "DEFRA",
+        destination: "USORD",
+        mode: "Air",
+        equipment: "1,240 kg / 4.5 CBM",
+        status: "sourcing",
+        source: "email",
+        sourceInbox: "rob@",
+        enteredStateAt: 12,
+        receivedAt: 26,
+        carriersInvited: 6,
+        carriersResponded: 3,
+        siblingIntent: "Standard",
+      },
+      {
+        id: "BR-2026-0428-1244-3",
+        customer: "Apex Pharma",
+        customerYTD: "£91k",
+        origin: "DEFRA",
+        destination: "USORD",
+        mode: "Air",
+        equipment: "1,240 kg / 4.5 CBM",
+        status: "sourcing",
+        source: "email",
+        sourceInbox: "rob@",
+        enteredStateAt: 12,
+        receivedAt: 26,
+        carriersInvited: 6,
+        carriersResponded: 4,
+        siblingIntent: "Economy",
+      },
+      {
+        id: "BR-2026-0428-1244-4",
+        customer: "Apex Pharma",
+        customerYTD: "£91k",
+        origin: "DEFRA",
+        destination: "USORD",
+        mode: "Air",
+        equipment: "1,240 kg / 4.5 CBM",
+        status: "gathering",
+        source: "email",
+        sourceInbox: "rob@",
+        enteredStateAt: 21,
+        receivedAt: 26,
+        siblingIntent: "Charter",
+        missing: ["aircraft type preference", "loading-time tolerance"],
+      },
+      {
+        id: "BR-2026-0428-1244-5",
+        customer: "Apex Pharma",
+        customerYTD: "£91k",
+        origin: "DEFRA",
+        destination: "USORD",
+        mode: "Air",
+        equipment: "1,240 kg / 4.5 CBM",
+        status: "recommended",
+        source: "email",
+        sourceInbox: "rob@",
+        enteredStateAt: 3,
+        receivedAt: 26,
+        carriersInvited: 4,
+        carriersResponded: 4,
+        topRecommendation: "Lufthansa Cargo · £4,210",
+        margin: "+13%",
+        siblingIntent: "Hand-carry",
+      },
+    ],
+  },
+];
+
+// Build the unified entries list: groups first, then singletons.
+const ENTRIES: InboxEntry[] = [
+  ...SIBLING_GROUPS.map((g) => ({ kind: "group" as const, group: g })),
+  ...ROWS.map((r) => ({ kind: "single" as const, row: r })),
+];
+
+// All draft rows flattened — used for KPI counts.
+const ALL_ROWS: InboxRow[] = [
+  ...ROWS,
+  ...SIBLING_GROUPS.flatMap((g) => g.children),
+];
+
 // ============================================================
 // Status presentation
 // ============================================================
@@ -292,6 +430,19 @@ function timeTone(minutes: number, status: DraftStatus): string {
   if (status === "gathering" && minutes > 60) return "text-rose-700 font-medium";
   if (status === "sourcing" && minutes > 120) return "text-amber-700";
   return "text-zinc-600";
+}
+
+function oldestEnteredAt(e: InboxEntry): number {
+  if (e.kind === "single") return e.row.enteredStateAt;
+  return Math.max(...e.group.children.map((c) => c.enteredStateAt));
+}
+
+function summarizeGroupStatus(children: InboxRow[]): string {
+  const counts: Partial<Record<DraftStatus, number>> = {};
+  for (const c of children) counts[c.status] = (counts[c.status] ?? 0) + 1;
+  return Object.entries(counts)
+    .map(([s, n]) => `${n} ${s}`)
+    .join(" · ");
 }
 
 function SourceIcon({ source }: { source: SourceType }) {
@@ -725,23 +876,50 @@ export default function QuoteInboxPage() {
   const [query, setQuery] = useState("");
   const [sendRfqRow, setSendRfqRow] = useState<InboxRow | null>(null);
   const [askInfoRow, setAskInfoRow] = useState<InboxRow | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({
+    "GRP-2026-0428-AP01": true, // expanded by default to demo the pattern
+  });
 
   const group = STATUS_GROUPS.find((g) => g.id === groupId) ?? STATUS_GROUPS[0];
 
+  const matchesText = (r: InboxRow, q: string) =>
+    q.length === 0 ||
+    r.customer.toLowerCase().includes(q) ||
+    r.origin.toLowerCase().includes(q) ||
+    r.destination.toLowerCase().includes(q) ||
+    r.mode.toLowerCase().includes(q) ||
+    r.id.toLowerCase().includes(q);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return ROWS.filter((r) => group.statuses.includes(r.status))
-      .filter(
-        (r) =>
-          q.length === 0 ||
-          r.customer.toLowerCase().includes(q) ||
-          r.origin.toLowerCase().includes(q) ||
-          r.destination.toLowerCase().includes(q) ||
-          r.mode.toLowerCase().includes(q) ||
-          r.id.toLowerCase().includes(q),
-      )
-      .sort((a, b) => a.enteredStateAt - b.enteredStateAt);
+    const out: InboxEntry[] = [];
+    for (const e of ENTRIES) {
+      if (e.kind === "single") {
+        if (group.statuses.includes(e.row.status) && matchesText(e.row, q)) {
+          out.push(e);
+        }
+      } else {
+        // Group passes if ANY child passes both filters.
+        const visibleKids = e.group.children.filter(
+          (c) => group.statuses.includes(c.status) && matchesText(c, q),
+        );
+        if (visibleKids.length > 0) {
+          out.push({ kind: "group", group: { ...e.group, children: visibleKids } });
+        }
+      }
+    }
+    // Sort by oldest in-state minute (groups use min child).
+    return out.sort((a, b) => oldestEnteredAt(a) - oldestEnteredAt(b));
   }, [group, query]);
+
+  const visibleRowCount = filtered.reduce(
+    (n, e) => n + (e.kind === "single" ? 1 : e.group.children.length),
+    0,
+  );
+
+  function toggleGroup(id: string) {
+    setExpanded((s) => ({ ...s, [id]: !s[id] }));
+  }
 
   function actionFor(row: InboxRow) {
     if (row.status === "new" || row.status === "gathering") {
@@ -816,13 +994,13 @@ export default function QuoteInboxPage() {
 
         <div className="max-w-[1600px] mx-auto px-6 py-6 space-y-6">
           {/* KPI strip */}
-          <StatStrip rows={ROWS} />
+          <StatStrip rows={ALL_ROWS} />
 
           {/* Filter row */}
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1 border rounded p-1 bg-white">
               {STATUS_GROUPS.map((g) => {
-                const count = ROWS.filter((r) => g.statuses.includes(r.status)).length;
+                const count = ALL_ROWS.filter((r) => g.statuses.includes(r.status)).length;
                 const active = g.id === groupId;
                 return (
                   <button
@@ -868,10 +1046,10 @@ export default function QuoteInboxPage() {
           <Card>
             <CardHeader className="pb-3 flex flex-row items-center justify-between">
               <CardTitle className="text-sm">
-                {group.label} ({filtered.length})
+                {group.label} ({visibleRowCount})
               </CardTitle>
               <div className="text-[11px] text-zinc-500 font-mono">
-                sorted by time-in-state asc
+                sorted by time-in-state asc · {filtered.filter((e) => e.kind === "group").length} grouped
               </div>
             </CardHeader>
             <CardContent className="pt-0">
@@ -893,7 +1071,201 @@ export default function QuoteInboxPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.map((r) => (
+                  {filtered.flatMap((entry) => {
+                    if (entry.kind === "group") {
+                      const g = entry.group;
+                      const isOpen = !!expanded[g.groupId];
+                      const oldestKid = g.children.reduce((a, b) =>
+                        a.enteredStateAt > b.enteredStateAt ? a : b,
+                      );
+                      const parentRow = (
+                        <TableRow
+                          key={g.groupId}
+                          className="hover:bg-violet-50/40 cursor-pointer bg-violet-50/20 border-l-2 border-l-violet-300"
+                          onClick={() => toggleGroup(g.groupId)}
+                        >
+                          <TableCell>
+                            <div className="flex items-start gap-2">
+                              <span className="mt-0.5 text-violet-600">
+                                {isOpen ? (
+                                  <ChevronDown className="size-4" />
+                                ) : (
+                                  <ChevronRight className="size-4" />
+                                )}
+                              </span>
+                              <div>
+                                <div className="font-medium text-sm flex items-center gap-2">
+                                  {g.customer}
+                                  <Badge className="bg-violet-100 text-violet-800 text-[10px] uppercase tracking-wide flex items-center gap-1">
+                                    <Layers className="size-2.5" />
+                                    {g.children.length} options
+                                  </Badge>
+                                </div>
+                                <div className="flex items-center gap-2 text-[11px] text-zinc-500 font-mono">
+                                  <span>{g.groupId}</span>
+                                  {g.customerYTD && (
+                                    <>
+                                      <span className="text-zinc-300">·</span>
+                                      <span>YTD {g.customerYTD}</span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1.5 text-sm font-mono">
+                              <span>{g.origin}</span>
+                              <ArrowRight className="size-3 text-zinc-400" />
+                              <span>{g.destination}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="text-xs text-zinc-500 italic">
+                              {Array.from(new Set(g.children.map((c) => c.mode))).join(" / ")}
+                            </div>
+                            <div className="text-[10px] text-zinc-400">
+                              {Array.from(new Set(g.children.map((c) => c.siblingIntent).filter(Boolean))).join(" · ")}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="text-[11px] text-zinc-600">
+                              {summarizeGroupStatus(g.children)}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1.5">
+                              <SourceIcon source={g.source} />
+                              {g.sourceInbox && (
+                                <span className="text-[11px] text-zinc-500 font-mono">
+                                  {g.sourceInbox}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-violet-700 mt-0.5 flex items-center gap-1">
+                              <Sparkles className="size-2.5" />
+                              split by AI · {Math.round(g.splitConfidence * 100)}% confidence
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div
+                              className={`text-sm font-mono ${timeTone(oldestKid.enteredStateAt, oldestKid.status)}`}
+                            >
+                              {formatTime(oldestKid.enteredStateAt)}
+                            </div>
+                            <div className="text-[10px] text-zinc-400">
+                              email received {formatTime(g.receivedAt)} ago
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="text-[11px] text-zinc-600">
+                              {g.children.filter((c) => c.status === "recommended").length} ready to send,{" "}
+                              {g.children.filter((c) => c.status === "sourcing").length} sourcing
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleGroup(g.groupId);
+                              }}
+                            >
+                              {isOpen ? "Collapse" : "Expand"}
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+
+                      if (!isOpen) return [parentRow];
+
+                      const childRows = g.children
+                        .slice()
+                        .sort((a, b) => a.enteredStateAt - b.enteredStateAt)
+                        .map((c) => (
+                          <TableRow
+                            key={c.id}
+                            className="hover:bg-zinc-50 cursor-pointer border-l-2 border-l-violet-100 bg-violet-50/[0.04]"
+                          >
+                            <TableCell>
+                              <div className="pl-7">
+                                <div className="text-sm flex items-center gap-2">
+                                  <span className="text-zinc-400 font-mono text-[10px]">↳</span>
+                                  <span className="font-medium">{c.siblingIntent ?? c.mode}</span>
+                                </div>
+                                <div className="text-[11px] text-zinc-500 font-mono pl-4">
+                                  {c.id}
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-[11px] text-zinc-400">same lane</span>
+                            </TableCell>
+                            <TableCell>
+                              <div className="text-sm">{c.mode}</div>
+                              {c.equipment && (
+                                <div className="text-[11px] text-zinc-500">{c.equipment}</div>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Badge className={STATUS_TONE[c.status]}>{STATUS_LABEL[c.status]}</Badge>
+                            </TableCell>
+                            <TableCell>
+                              <span className="text-[11px] text-zinc-400">via group</span>
+                            </TableCell>
+                            <TableCell>
+                              <div
+                                className={`text-sm font-mono ${timeTone(c.enteredStateAt, c.status)}`}
+                              >
+                                {formatTime(c.enteredStateAt)}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {c.status === "sourcing" && (
+                                <div className="flex items-center gap-2 text-xs">
+                                  <PulsingBrain size={14} />
+                                  <span className="text-zinc-600 font-mono">
+                                    {c.carriersResponded}/{c.carriersInvited}
+                                  </span>
+                                </div>
+                              )}
+                              {c.status === "recommended" && c.topRecommendation && (
+                                <div>
+                                  <div className="text-xs flex items-center gap-1">
+                                    <Star className="size-3 fill-emerald-500 text-emerald-500" />
+                                    <span className="font-mono">{c.topRecommendation}</span>
+                                  </div>
+                                  {c.margin && (
+                                    <div className="text-[10px] text-emerald-700 font-mono">
+                                      margin {c.margin}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              {(c.status === "new" || c.status === "gathering") && c.missing && (
+                                <div className="text-[11px] text-amber-700">
+                                  missing: {c.missing.slice(0, 2).join(", ")}
+                                  {c.missing.length > 2 && ` +${c.missing.length - 2}`}
+                                </div>
+                              )}
+                              {c.status === "ready" && (
+                                <div className="flex items-center gap-1.5 text-xs">
+                                  <Sparkles className="size-3 text-violet-600" />
+                                  <span className="text-zinc-600">prep done</span>
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right">{actionFor(c)}</TableCell>
+                          </TableRow>
+                        ));
+
+                      return [parentRow, ...childRows];
+                    }
+
+                    const r = entry.row;
+                    return [(
                     <TableRow key={r.id} className="hover:bg-zinc-50 cursor-pointer">
                       <TableCell>
                         <div className="font-medium text-sm">{r.customer}</div>
@@ -1000,19 +1372,23 @@ export default function QuoteInboxPage() {
                       </TableCell>
                       <TableCell className="text-right">{actionFor(r)}</TableCell>
                     </TableRow>
-                  ))}
+                    )];
+                  })}
                 </TableBody>
               </Table>
             </CardContent>
           </Card>
 
           {/* Footer note */}
-          <div className="text-[11px] text-zinc-400 text-center pb-6">
-            Mock-up · static data, no backend calls · clicking <em>Send RFQ</em> on a{" "}
+          <div className="text-[11px] text-zinc-400 text-center pb-6 max-w-3xl mx-auto leading-relaxed">
+            Mock-up · static data, no backend calls. <em>Send RFQ</em> on a{" "}
             <span className="font-mono">ready</span> row opens the carrier slide-out;{" "}
             <em>Ask for info</em> on a <span className="font-mono">new</span> /{" "}
-            <span className="font-mono">gathering</span> row opens the missing-fields panel.
-            Per-quote workspace lives at <span className="font-mono">/dev/quote-preview</span>.
+            <span className="font-mono">gathering</span> row opens the missing-fields panel.{" "}
+            <span className="text-violet-700">Sibling groups</span> (e.g. Apex Pharma · 5 options)
+            represent one inbound email split by classify-email into N quote drafts;
+            click the chevron to expand. Per-quote workspace lives at{" "}
+            <span className="font-mono">/dev/quote-preview</span>.
           </div>
         </div>
 
