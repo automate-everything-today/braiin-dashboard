@@ -213,6 +213,10 @@ const RECENT_FEEDBACK = [
 
 // ----------------- Helpers -----------------
 
+// Shared small-pill class so badges don't compete with action buttons
+// for attention. Matches the same constant in /dev/quote-inbox.
+const PILL_SM = "text-[10px] px-1.5 py-0 leading-[18px] h-[18px] font-normal tracking-normal";
+
 function fmtMoney(n: number, cur = "£") {
   return `${cur}${n.toLocaleString()}`;
 }
@@ -225,12 +229,12 @@ function ScoreBadge({ score }: { score: number }) {
       : score >= 70
         ? "bg-amber-100 text-amber-800"
         : "bg-rose-100 text-rose-800";
-  return <Badge className={`${tone} font-mono`}>{score}</Badge>;
+  return <Badge className={`${tone} ${PILL_SM} font-mono`}>{score}</Badge>;
 }
 
 function StatusPill({ status }: { status: RfqRow["status"] }) {
-  if (status === "received") return <Badge className="bg-emerald-100 text-emerald-800">received</Badge>;
-  if (status === "timeout") return <Badge className="bg-rose-100 text-rose-800">timeout</Badge>;
+  if (status === "received") return <Badge className={`${PILL_SM} bg-emerald-100 text-emerald-800`}>received</Badge>;
+  if (status === "timeout") return <Badge className={`${PILL_SM} bg-rose-100 text-rose-800`}>timeout</Badge>;
   return null; // in_progress shown with brain animation
 }
 
@@ -263,7 +267,7 @@ function SourceBadge({ source }: { source: RfqRow["source"] }) {
       : source === "Aggregator"
         ? "bg-cyan-100 text-cyan-800"
         : "bg-zinc-100 text-zinc-700";
-  return <Badge className={`${tone} text-[10px] uppercase tracking-wide`}>{source}</Badge>;
+  return <Badge className={`${tone} ${PILL_SM} uppercase tracking-wide`}>{source}</Badge>;
 }
 
 // ----------------- Page -----------------
@@ -278,9 +282,9 @@ export default function QuotePreviewPage() {
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
                 <Ship className="size-5 text-zinc-600" />
-                <span className="font-mono text-xs bg-zinc-100 px-2 py-0.5 rounded">
+                <Badge className={`${PILL_SM} bg-zinc-100 text-zinc-700 font-mono`}>
                   {QUOTE.id}
-                </span>
+                </Badge>
               </div>
               <Separator orientation="vertical" className="h-6" />
               <div className="text-sm font-medium">{QUOTE.customer}</div>
@@ -296,7 +300,7 @@ export default function QuotePreviewPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Badge className="bg-amber-100 text-amber-800">sourcing</Badge>
+              <Badge className={`${PILL_SM} bg-amber-100 text-amber-800`}>sourcing</Badge>
               <span className="text-xs text-zinc-500">4 of 8 carriers responded</span>
             </div>
           </div>
@@ -553,7 +557,7 @@ export default function QuotePreviewPage() {
                             </TableCell>
                             <TableCell>
                               {recommended ? (
-                                <Badge className="bg-emerald-100 text-emerald-800">pick</Badge>
+                                <Badge className={`${PILL_SM} bg-emerald-100 text-emerald-800`}>pick</Badge>
                               ) : (
                                 <Button size="sm" variant="ghost" className="h-6 text-xs">
                                   use

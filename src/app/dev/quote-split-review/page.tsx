@@ -120,6 +120,9 @@ const REASON =
 // Helpers
 // ============================================================
 
+// Shared small-pill class. Matches /dev/quote-inbox + /dev/quote-preview.
+const PILL_SM = "text-[10px] px-1.5 py-0 leading-[18px] h-[18px] font-normal tracking-normal";
+
 function ConfidenceBadge({ value }: { value: number }) {
   const pct = Math.round(value * 100);
   const tone =
@@ -128,7 +131,7 @@ function ConfidenceBadge({ value }: { value: number }) {
       : value >= 0.7
         ? "bg-amber-100 text-amber-800"
         : "bg-orange-100 text-orange-800";
-  return <Badge className={`${tone} font-mono text-[11px]`}>{pct}%</Badge>;
+  return <Badge className={`${tone} ${PILL_SM} font-mono`}>{pct}%</Badge>;
 }
 
 // ============================================================
@@ -204,7 +207,7 @@ export default function QuoteSplitReviewPage() {
               <Separator orientation="vertical" className="h-5" />
               <Layers className="size-5 text-orange-600" />
               <h1 className="text-lg font-medium">Review proposed split</h1>
-              <Badge className="bg-zinc-100 text-zinc-600 font-mono text-[10px]">
+              <Badge className={`${PILL_SM} bg-zinc-100 text-zinc-600 font-mono`}>
                 GRP-2026-0428-BW01
               </Badge>
             </div>
@@ -395,7 +398,7 @@ export default function QuoteSplitReviewPage() {
                         {s.intent}
                       </CardTitle>
                       <div className="flex items-center gap-2 text-xs text-zinc-600">
-                        <Badge className="bg-zinc-100 text-zinc-700">{s.modeLabel}</Badge>
+                        <Badge className={`${PILL_SM} bg-zinc-100 text-zinc-700`}>{s.modeLabel}</Badge>
                         <span className="font-mono">{s.origin}</span>
                         <ArrowRight className="size-3 text-zinc-400" />
                         <span className="font-mono">{s.destination}</span>
