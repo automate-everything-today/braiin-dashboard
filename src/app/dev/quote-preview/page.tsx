@@ -281,20 +281,100 @@ type ChargeCategory =
   | "insurance"
   | "other";
 
+type Currency = "GBP" | "USD" | "EUR" | "AUD";
+
+// Five margin types matching the migration 039 enum.
+//   pct           - sell = cost * (1 + value/100)
+//   flat          - sell = cost + value (in margin_currency)
+//   per_cbm       - sell = cost + (value * draft.volume_cbm)
+//   per_kg        - sell = cost + (value * draft.weight_kg)
+//   per_container - sell = cost + (value * draft.container_count)
+//   per_pallet    - sell = cost + (value * draft.pallet_count)
+//   override      - sell = sell_amount_override (ignore cost entirely)
+type MarginType =
+  | "pct"
+  | "flat"
+  | "per_cbm"
+  | "per_kg"
+  | "per_container"
+  | "per_pallet"
+  | "override";
+
 interface ChargeLine {
   id: string;
   category: ChargeCategory;
   code: string;
   description: string;
   costAmount: number;
-  currency: "GBP" | "USD" | "EUR";
+  currency: Currency;
   // Defaults applied when the line is rendered. Operator can override
   // any of these.
-  defaultMarginPct: number;
+  defaultMarginType: MarginType;
+  defaultMarginValue: number;
   defaultVisible: boolean;
   // Optional grouping label that consolidates this line under a
   // single rolled-up entry on the customer view.
   defaultConsolidateAs: string | null;
+}
+
+// ----- FX rates (faked for the mock - production reads geo.fx_rates) -----
+// Stored as base->GBP rates; cross-pair conversion goes via GBP.
+// Rates as of mock 2026-04-28.
+const FX_AS_OF = "2026-04-28 09:14 UTC";
+const FX_TO_GBP: Record<Currency, number> = {
+  GBP: 1.0,
+  USD: 0.795,
+  EUR: 0.857,
+  AUD: 0.519,
+};
+
+function convert(amount: number, from: Currency, to: Currency): number {
+  if (from === to) return amount;
+  const inGbp = amount * FX_TO_GBP[from];
+  return inGbp / FX_TO_GBP[to];
+}
+
+const CURRENCY_SYMBOL: Record<Currency, string> = {
+  GBP: "£",
+  USD: "$",
+  EUR: "€",
+  AUD: "A$",
+};
+
+// ----- Draft quantity context (for per-unit margins) -----
+const DRAFT_QUANTITIES = {
+  volumeCbm: 50,
+  weightKg: 18000,
+  containerCount: 2,
+  palletCount: 0,
+};
+
+const MARGIN_TYPE_LABEL: Record<MarginType, string> = {
+  pct: "%",
+  flat: "flat",
+  per_cbm: "/CBM",
+  per_kg: "/kg",
+  per_container: "/cont",
+  per_pallet: "/pallet",
+  override: "set sell",
+};
+
+const MARGIN_TYPE_FULL_LABEL: Record<MarginType, string> = {
+  pct: "% of cost",
+  flat: "Flat amount",
+  per_cbm: "Per CBM",
+  per_kg: "Per kg",
+  per_container: "Per container",
+  per_pallet: "Per pallet",
+  override: "Override sell",
+};
+
+function unitCountFor(type: MarginType): number {
+  if (type === "per_cbm") return DRAFT_QUANTITIES.volumeCbm;
+  if (type === "per_kg") return DRAFT_QUANTITIES.weightKg;
+  if (type === "per_container") return DRAFT_QUANTITIES.containerCount;
+  if (type === "per_pallet") return DRAFT_QUANTITIES.palletCount;
+  return 0;
 }
 
 const CATEGORY_LABEL: Record<ChargeCategory, string> = {
@@ -321,49 +401,78 @@ const CATEGORY_TONE: Record<ChargeCategory, string> = {
   other: "border-l-zinc-300",
 };
 
-// Hapag-Lloyd Standard cost basis broken down to charge level.
-// Total cost £2,510 = sum of these lines.
+// Hapag-Lloyd Standard cost basis broken down to charge level. A real
+// shipment quote mixes currencies: ocean freight is typically quoted
+// in USD by the carrier, local UK / Chinese charges in GBP, occasionally
+// EUR. The output currency chooser at the top of the panel decides how
+// the customer sees the total.
 const HAPAG_LINES: ChargeLine[] = [
-  // Origin
-  { id: "ORG-THC", category: "origin", code: "THC", description: "Terminal handling - Felixstowe", costAmount: 195, currency: "GBP", defaultMarginPct: 14, defaultVisible: true, defaultConsolidateAs: "Origin charges" },
-  { id: "ORG-DOC", category: "origin", code: "DOC", description: "Documentation fee", costAmount: 60, currency: "GBP", defaultMarginPct: 14, defaultVisible: true, defaultConsolidateAs: "Origin charges" },
-  { id: "ORG-EXA", category: "origin", code: "EXA", description: "Container examination charge (UK)", costAmount: 25, currency: "GBP", defaultMarginPct: 14, defaultVisible: true, defaultConsolidateAs: "Origin charges" },
-  { id: "ORG-AMS", category: "origin", code: "AMS", description: "AMS / ENS filing fee", costAmount: 35, currency: "GBP", defaultMarginPct: 14, defaultVisible: false, defaultConsolidateAs: "Origin charges" },
+  // Origin (UK side - GBP)
+  { id: "ORG-THC", category: "origin", code: "THC", description: "Terminal handling - Felixstowe", costAmount: 195, currency: "GBP", defaultMarginType: "pct", defaultMarginValue: 14, defaultVisible: true, defaultConsolidateAs: "Origin charges" },
+  { id: "ORG-DOC", category: "origin", code: "DOC", description: "Documentation fee", costAmount: 60, currency: "GBP", defaultMarginType: "flat", defaultMarginValue: 25, defaultVisible: true, defaultConsolidateAs: "Origin charges" },
+  { id: "ORG-EXA", category: "origin", code: "EXA", description: "Container examination charge (UK)", costAmount: 25, currency: "GBP", defaultMarginType: "pct", defaultMarginValue: 14, defaultVisible: true, defaultConsolidateAs: "Origin charges" },
+  { id: "ORG-AMS", category: "origin", code: "AMS", description: "AMS / ENS filing fee", costAmount: 45, currency: "USD", defaultMarginType: "pct", defaultMarginValue: 14, defaultVisible: false, defaultConsolidateAs: "Origin charges" },
 
   // Pickup
-  { id: "PCK-HAUL", category: "pickup", code: "HAUL", description: "Haulage supplier door to FXT", costAmount: 220, currency: "GBP", defaultMarginPct: 14, defaultVisible: true, defaultConsolidateAs: null },
+  { id: "PCK-HAUL", category: "pickup", code: "HAUL", description: "Haulage supplier door to FXT", costAmount: 220, currency: "GBP", defaultMarginType: "per_container", defaultMarginValue: 50, defaultVisible: true, defaultConsolidateAs: null },
 
-  // Freight
-  { id: "FRT-OCEAN", category: "freight", code: "OCN", description: "Ocean freight - all-in basic", costAmount: 1320, currency: "GBP", defaultMarginPct: 12, defaultVisible: true, defaultConsolidateAs: null },
+  // Freight (typically quoted in USD by ocean carriers)
+  { id: "FRT-OCEAN", category: "freight", code: "OCN", description: "Ocean freight - all-in basic FXT-CNSHA", costAmount: 1660, currency: "USD", defaultMarginType: "pct", defaultMarginValue: 12, defaultVisible: true, defaultConsolidateAs: null },
 
   // Surcharges
-  { id: "SCH-BAF", category: "surcharges", code: "BAF", description: "Bunker adjustment factor", costAmount: 180, currency: "GBP", defaultMarginPct: 14, defaultVisible: false, defaultConsolidateAs: "Surcharges" },
-  { id: "SCH-LSF", category: "surcharges", code: "LSF", description: "Low sulphur fuel surcharge", costAmount: 75, currency: "GBP", defaultMarginPct: 14, defaultVisible: false, defaultConsolidateAs: "Surcharges" },
-  { id: "SCH-PSS", category: "surcharges", code: "PSS", description: "Peak season surcharge", costAmount: 90, currency: "GBP", defaultMarginPct: 14, defaultVisible: false, defaultConsolidateAs: "Surcharges" },
-  { id: "SCH-WAR", category: "surcharges", code: "WAR", description: "War risk / piracy surcharge", costAmount: 30, currency: "GBP", defaultMarginPct: 14, defaultVisible: false, defaultConsolidateAs: "Surcharges" },
+  { id: "SCH-BAF", category: "surcharges", code: "BAF", description: "Bunker adjustment factor", costAmount: 226, currency: "USD", defaultMarginType: "pct", defaultMarginValue: 14, defaultVisible: false, defaultConsolidateAs: "Surcharges" },
+  { id: "SCH-LSF", category: "surcharges", code: "LSF", description: "Low sulphur fuel surcharge", costAmount: 95, currency: "USD", defaultMarginType: "pct", defaultMarginValue: 14, defaultVisible: false, defaultConsolidateAs: "Surcharges" },
+  { id: "SCH-PSS", category: "surcharges", code: "PSS", description: "Peak season surcharge", costAmount: 113, currency: "USD", defaultMarginType: "pct", defaultMarginValue: 14, defaultVisible: false, defaultConsolidateAs: "Surcharges" },
+  { id: "SCH-WAR", category: "surcharges", code: "WAR", description: "War risk / piracy surcharge", costAmount: 38, currency: "USD", defaultMarginType: "pct", defaultMarginValue: 14, defaultVisible: false, defaultConsolidateAs: "Surcharges" },
 
-  // Destination
-  { id: "DST-THC", category: "destination", code: "DTHC", description: "Destination terminal handling - Shanghai", costAmount: 220, currency: "GBP", defaultMarginPct: 14, defaultVisible: true, defaultConsolidateAs: "Destination charges" },
-  { id: "DST-DOC", category: "destination", code: "DOC", description: "Destination documentation fee", costAmount: 45, currency: "GBP", defaultMarginPct: 14, defaultVisible: true, defaultConsolidateAs: "Destination charges" },
-
-  // Delivery (deliberately deferred - customer arranges import side)
-  // (none for this lane)
+  // Destination (CN side - USD as charged by carrier)
+  { id: "DST-THC", category: "destination", code: "DTHC", description: "Destination terminal handling - Shanghai", costAmount: 277, currency: "USD", defaultMarginType: "pct", defaultMarginValue: 14, defaultVisible: true, defaultConsolidateAs: "Destination charges" },
+  { id: "DST-DOC", category: "destination", code: "DOC", description: "Destination documentation fee", costAmount: 57, currency: "USD", defaultMarginType: "pct", defaultMarginValue: 14, defaultVisible: true, defaultConsolidateAs: "Destination charges" },
 
   // Customs
-  { id: "CST-CLR", category: "customs", code: "CLR", description: "UK export customs clearance", costAmount: 15, currency: "GBP", defaultMarginPct: 14, defaultVisible: true, defaultConsolidateAs: null },
+  { id: "CST-CLR", category: "customs", code: "CLR", description: "UK export customs clearance", costAmount: 15, currency: "GBP", defaultMarginType: "flat", defaultMarginValue: 10, defaultVisible: true, defaultConsolidateAs: null },
 ];
 
 // ----- Charge state machine for the panel -----
 
 interface LineState {
-  marginPct: number;
+  // Cost (operator-editable - pulled from carrier extraction by default,
+  // overridden flag set when operator changes it)
+  costAmount: number;
+  costCurrency: Currency;
+  costOverridden: boolean;
+  // Margin model
+  marginType: MarginType;
+  marginValue: number;
+  // For 'override' type, the explicit sell amount in margin_currency
+  sellOverride?: number;
+  marginCurrency: Currency;
+  // Customer-facing presentation
   visible: boolean;
   consolidateAs: string | null;
 }
 
-function fmtCurrency(amount: number, currency: string) {
-  const sym = currency === "USD" ? "$" : currency === "EUR" ? "€" : "£";
+function fmtCurrency(amount: number, currency: Currency, opts?: { sym?: boolean }) {
+  const sym = opts?.sym === false ? "" : CURRENCY_SYMBOL[currency];
   return `${sym}${amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+}
+
+// Compute sell from a line's state, in the cost currency.
+function sellAmount(line: ChargeLine, s: LineState): number {
+  if (s.marginType === "override" && s.sellOverride !== undefined) {
+    // Override is in marginCurrency - convert into cost currency for
+    // the operator-side number, then onward into output currency at
+    // render time.
+    return convert(s.sellOverride, s.marginCurrency, s.costCurrency);
+  }
+  if (s.marginType === "pct") {
+    return s.costAmount * (1 + s.marginValue / 100);
+  }
+  // flat / per_unit - margin is in marginCurrency, convert before adding
+  const unitCount = s.marginType === "flat" ? 1 : unitCountFor(s.marginType);
+  const marginInMarginCcy = s.marginValue * unitCount;
+  const marginInCostCcy = convert(marginInMarginCcy, s.marginCurrency, s.costCurrency);
+  return s.costAmount + marginInCostCcy;
 }
 
 interface BreakdownPanelProps {
@@ -372,15 +481,27 @@ interface BreakdownPanelProps {
 }
 
 function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
+  // Quote-level controls
+  const [outputCurrency, setOutputCurrency] = useState<Currency>("GBP");
+  const [validityMode, setValidityMode] = useState<"days" | "date">("days");
+  const [validityDays, setValidityDays] = useState<7 | 14 | 21 | 30>(14);
+  const [validityDate, setValidityDate] = useState<string>("2026-05-12");
+
+  // Per-line state
   const [state, setState] = useState<Record<string, LineState>>(() =>
     HAPAG_LINES.reduce(
       (acc, l) => ({
         ...acc,
         [l.id]: {
-          marginPct: l.defaultMarginPct,
+          costAmount: l.costAmount,
+          costCurrency: l.currency,
+          costOverridden: false,
+          marginType: l.defaultMarginType,
+          marginValue: l.defaultMarginValue,
+          marginCurrency: l.currency, // default to cost currency
           visible: l.defaultVisible,
           consolidateAs: l.defaultConsolidateAs,
-        },
+        } as LineState,
       }),
       {},
     ),
@@ -390,28 +511,58 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
     setState((s) => ({ ...s, [id]: { ...s[id], ...patch } }));
   }
 
-  // Operator-facing totals
+  // Edit-cost: operator typed a new cost. Mark overridden, sell follows
+  // the existing margin.
+  function setCost(id: string, costAmount: number) {
+    update(id, { costAmount, costOverridden: true });
+  }
+
+  // Edit-sell: operator typed a new sell amount in the line's currency.
+  // We switch margin type to 'override' and persist the value so the
+  // schema keeps a clean record of what the operator chose.
+  function setSell(id: string, line: ChargeLine, sellInCostCurrency: number) {
+    const s = state[line.id];
+    update(id, {
+      marginType: "override",
+      sellOverride: convert(sellInCostCurrency, s.costCurrency, s.marginCurrency),
+    });
+  }
+
+  function setMarginType(id: string, line: ChargeLine, t: MarginType) {
+    const s = state[line.id];
+    if (t === "override") {
+      // Pre-populate sellOverride with the current computed sell so
+      // toggling between margin types doesn't shock the customer total.
+      const current = sellAmount(line, s);
+      update(id, {
+        marginType: t,
+        sellOverride: convert(current, s.costCurrency, s.marginCurrency),
+      });
+    } else {
+      update(id, { marginType: t });
+    }
+  }
+
+  // Operator-facing totals (in output currency)
   const totals = useMemo(() => {
     let cost = 0;
     let sell = 0;
     for (const l of HAPAG_LINES) {
       const s = state[l.id];
-      cost += l.costAmount;
-      sell += l.costAmount * (1 + s.marginPct / 100);
+      cost += convert(s.costAmount, s.costCurrency, outputCurrency);
+      sell += convert(sellAmount(l, s), s.costCurrency, outputCurrency);
     }
     const margin = sell - cost;
     const marginPct = cost > 0 ? (margin / cost) * 100 : 0;
     return { cost, sell, margin, marginPct };
-  }, [state]);
+  }, [state, outputCurrency]);
 
-  // Customer-facing rolled-up view: lines that are visible. Consolidated
-  // groups roll up cost and use the worst-case margin so the operator
-  // doesn't accidentally undersell.
+  // Customer view in OUTPUT currency
   const customerView = useMemo(() => {
     interface OutLine {
       label: string;
       sell: number;
-      hiddenLineIds: string[];
+      lines: number;
     }
     const grouped = new Map<string, OutLine>();
     const flat: OutLine[] = [];
@@ -419,27 +570,31 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
     for (const l of HAPAG_LINES) {
       const s = state[l.id];
       if (!s.visible) continue;
-      const sell = l.costAmount * (1 + s.marginPct / 100);
+      const sellInOut = convert(sellAmount(l, s), s.costCurrency, outputCurrency);
       if (s.consolidateAs) {
         const existing = grouped.get(s.consolidateAs);
         if (existing) {
-          existing.sell += sell;
-          existing.hiddenLineIds.push(l.id);
+          existing.sell += sellInOut;
+          existing.lines += 1;
         } else {
-          const o: OutLine = {
-            label: s.consolidateAs,
-            sell,
-            hiddenLineIds: [l.id],
-          };
+          const o: OutLine = { label: s.consolidateAs, sell: sellInOut, lines: 1 };
           grouped.set(s.consolidateAs, o);
           flat.push(o);
         }
       } else {
-        flat.push({ label: l.description, sell, hiddenLineIds: [l.id] });
+        flat.push({ label: l.description, sell: sellInOut, lines: 1 });
       }
     }
     return flat;
-  }, [state]);
+  }, [state, outputCurrency]);
+
+  // Computed valid-until date for the customer view
+  const validUntilDisplay = useMemo(() => {
+    if (validityMode === "date") return validityDate;
+    const d = new Date();
+    d.setDate(d.getDate() + validityDays);
+    return d.toISOString().slice(0, 10);
+  }, [validityMode, validityDays, validityDate]);
 
   if (!open) return null;
 
@@ -508,29 +663,91 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
           </Button>
         </div>
 
-        {/* Top totals strip */}
-        <div className="px-5 py-3 grid grid-cols-4 gap-3 border-b bg-zinc-50">
-          <div>
+        {/* Quote-level controls strip - currency + validity */}
+        <div className="px-5 py-3 grid grid-cols-12 gap-3 border-b bg-zinc-50 items-end">
+          {/* Output currency */}
+          <div className="col-span-3">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
+              Quote in
+            </div>
+            <div className="flex items-center gap-1">
+              {(["GBP", "USD", "EUR", "AUD"] as Currency[]).map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setOutputCurrency(c)}
+                  className={`h-7 px-2 rounded text-xs font-mono border ${
+                    outputCurrency === c
+                      ? "bg-zinc-900 text-white border-zinc-900"
+                      : "bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-100"
+                  }`}
+                >
+                  {CURRENCY_SYMBOL[c]} {c}
+                </button>
+              ))}
+            </div>
+            <div className="text-[10px] text-zinc-400 mt-1 inline-flex items-center gap-1">
+              <Sparkles className="size-2.5 text-violet-600" />
+              FX from XE · {FX_AS_OF}
+            </div>
+          </div>
+
+          {/* Validity */}
+          <div className="col-span-4">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
+              Quote valid for
+            </div>
+            <div className="flex items-center gap-1">
+              {([7, 14, 21, 30] as const).map((d) => (
+                <button
+                  key={d}
+                  onClick={() => {
+                    setValidityMode("days");
+                    setValidityDays(d);
+                  }}
+                  className={`h-7 px-2 rounded text-xs border ${
+                    validityMode === "days" && validityDays === d
+                      ? "bg-zinc-900 text-white border-zinc-900"
+                      : "bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-100"
+                  }`}
+                >
+                  {d} days
+                </button>
+              ))}
+              <span className="text-zinc-300 mx-1">or</span>
+              <input
+                type="date"
+                value={validityDate}
+                onChange={(e) => {
+                  setValidityDate(e.target.value);
+                  setValidityMode("date");
+                }}
+                className={`h-7 px-1 rounded text-xs border ${
+                  validityMode === "date"
+                    ? "border-zinc-900 ring-2 ring-zinc-200"
+                    : "border-zinc-300"
+                }`}
+              />
+            </div>
+            <div className="text-[10px] text-zinc-500 mt-1">
+              Customer sees: <span className="font-mono">{validUntilDisplay}</span>
+            </div>
+          </div>
+
+          {/* Cost / Margin / Sell totals (in output currency) */}
+          <div className="col-span-2">
             <div className="text-[10px] uppercase tracking-wide text-zinc-500">Cost</div>
-            <div className="font-mono text-lg">{fmtCurrency(totals.cost, "GBP")}</div>
+            <div className="font-mono text-base">{fmtCurrency(totals.cost, outputCurrency)}</div>
+            <div className="text-[10px] text-zinc-500">in {outputCurrency}</div>
           </div>
-          <div>
+          <div className="col-span-1">
             <div className="text-[10px] uppercase tracking-wide text-zinc-500">Margin</div>
-            <div className="font-mono text-lg text-emerald-700">
-              +{totals.marginPct.toFixed(1)}%
-            </div>
-            <div className="text-[10px] text-zinc-500">{fmtCurrency(totals.margin, "GBP")} GP</div>
+            <div className="font-mono text-base text-emerald-700">+{totals.marginPct.toFixed(1)}%</div>
+            <div className="text-[10px] text-zinc-500">{fmtCurrency(totals.margin, outputCurrency)}</div>
           </div>
-          <div>
+          <div className="col-span-2">
             <div className="text-[10px] uppercase tracking-wide text-zinc-500">Sell</div>
-            <div className="font-mono text-lg">{fmtCurrency(totals.sell, "GBP")}</div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-zinc-500">
-              Customer sees
-            </div>
-            <div className="font-mono text-lg">{customerView.length} line{customerView.length === 1 ? "" : "s"}</div>
-            <div className="text-[10px] text-zinc-500">after hide / consolidate</div>
+            <div className="font-mono text-base">{fmtCurrency(totals.sell, outputCurrency)}</div>
+            <div className="text-[10px] text-zinc-500">{customerView.length} customer line{customerView.length === 1 ? "" : "s"}</div>
           </div>
         </div>
 
@@ -549,7 +766,10 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
               const lines = byCategory[cat];
               if (!lines || lines.length === 0) return null;
               const tone = CATEGORY_TONE[cat];
-              const subTotal = lines.reduce((n, l) => n + l.costAmount, 0);
+              const subTotalInOutput = lines.reduce((n, l) => {
+                const s = state[l.id];
+                return n + convert(s.costAmount, s.costCurrency, outputCurrency);
+              }, 0);
 
               return (
                 <div key={cat} className="px-5 py-3 border-b">
@@ -558,96 +778,219 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
                       {CATEGORY_LABEL[cat]}
                     </div>
                     <div className="text-[11px] text-zinc-500 font-mono">
-                      {fmtCurrency(subTotal, "GBP")}
+                      {fmtCurrency(subTotalInOutput, outputCurrency)} cost
                     </div>
                   </div>
 
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     {lines.map((l) => {
                       const s = state[l.id];
-                      const sell = l.costAmount * (1 + s.marginPct / 100);
+                      const sell = sellAmount(l, s);
+                      const sellInOut = convert(sell, s.costCurrency, outputCurrency);
+                      const showConvert = s.costCurrency !== outputCurrency;
                       return (
                         <div
                           key={l.id}
-                          className={`grid grid-cols-12 gap-2 items-center text-xs px-2 py-1.5 rounded ${
+                          className={`px-2 py-2 rounded space-y-1.5 ${
                             !s.visible ? "opacity-50 bg-zinc-50" : "hover:bg-zinc-50"
                           }`}
                         >
-                          <div className="col-span-5">
-                            <div className="flex items-center gap-1.5">
+                          {/* Row 1: code + description + actions */}
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
                               <Badge
-                                className={`${PILL_SM} bg-zinc-100 text-zinc-600 font-mono`}
+                                className={`${PILL_SM} bg-zinc-100 text-zinc-600 font-mono shrink-0`}
                               >
                                 {l.code}
                               </Badge>
-                              <span className="text-zinc-700">{l.description}</span>
+                              <span className="text-xs text-zinc-700 truncate">
+                                {l.description}
+                              </span>
+                              {s.costOverridden && (
+                                <Badge
+                                  className={`${PILL_SM} bg-amber-100 text-amber-800 uppercase tracking-wide`}
+                                  title="Cost overridden by operator"
+                                >
+                                  cost edited
+                                </Badge>
+                              )}
+                              {s.marginType === "override" && (
+                                <Badge
+                                  className={`${PILL_SM} bg-amber-100 text-amber-800 uppercase tracking-wide`}
+                                  title="Sell set directly - margin computed from cost"
+                                >
+                                  sell set
+                                </Badge>
+                              )}
                             </div>
-                            {s.consolidateAs && (
-                              <div className="text-[10px] text-violet-700 mt-0.5">
-                                ↳ rolled up as {s.consolidateAs}
-                              </div>
+                            <div className="flex items-center gap-0.5 shrink-0">
+                              <button
+                                onClick={() => update(l.id, { visible: !s.visible })}
+                                title={s.visible ? "Hide from customer" : "Show to customer"}
+                                className={`size-6 rounded inline-flex items-center justify-center ${
+                                  s.visible
+                                    ? "text-emerald-700 hover:bg-emerald-50"
+                                    : "text-zinc-400 hover:bg-zinc-100"
+                                }`}
+                              >
+                                {s.visible ? (
+                                  <Eye className="size-3.5" />
+                                ) : (
+                                  <EyeOff className="size-3.5" />
+                                )}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const next =
+                                    s.consolidateAs === null
+                                      ? existingGroups[0] ?? "Group"
+                                      : null;
+                                  update(l.id, { consolidateAs: next });
+                                }}
+                                title={
+                                  s.consolidateAs
+                                    ? "Un-consolidate"
+                                    : "Roll into a group on the customer view"
+                                }
+                                className={`size-6 rounded inline-flex items-center justify-center ${
+                                  s.consolidateAs
+                                    ? "text-violet-700 hover:bg-violet-50"
+                                    : "text-zinc-400 hover:bg-zinc-100"
+                                }`}
+                              >
+                                <Merge className="size-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Row 2: editable cost + margin + sell */}
+                          <div className="flex items-center gap-2 text-xs flex-wrap">
+                            {/* Cost */}
+                            <div className="inline-flex items-center gap-1">
+                              <span className="text-[10px] text-zinc-500">Cost</span>
+                              <select
+                                value={s.costCurrency}
+                                onChange={(e) =>
+                                  update(l.id, {
+                                    costCurrency: e.target.value as Currency,
+                                  })
+                                }
+                                className="h-6 px-1 rounded border border-zinc-300 text-[11px] bg-white"
+                              >
+                                {(["GBP", "USD", "EUR", "AUD"] as Currency[]).map((c) => (
+                                  <option key={c} value={c}>
+                                    {c}
+                                  </option>
+                                ))}
+                              </select>
+                              <input
+                                type="number"
+                                value={s.costAmount}
+                                step={0.01}
+                                onChange={(e) => setCost(l.id, Number(e.target.value))}
+                                className="w-20 h-6 px-1 text-right rounded border border-zinc-300 text-xs font-mono"
+                              />
+                            </div>
+
+                            <span className="text-zinc-300">→</span>
+
+                            {/* Margin */}
+                            <div className="inline-flex items-center gap-1">
+                              <span className="text-[10px] text-zinc-500">Margin</span>
+                              <select
+                                value={s.marginType}
+                                onChange={(e) =>
+                                  setMarginType(l.id, l, e.target.value as MarginType)
+                                }
+                                className="h-6 px-1 rounded border border-zinc-300 text-[11px] bg-white"
+                                title={MARGIN_TYPE_FULL_LABEL[s.marginType]}
+                              >
+                                {(
+                                  [
+                                    "pct",
+                                    "flat",
+                                    "per_cbm",
+                                    "per_kg",
+                                    "per_container",
+                                    "per_pallet",
+                                    "override",
+                                  ] as MarginType[]
+                                ).map((t) => (
+                                  <option key={t} value={t}>
+                                    {MARGIN_TYPE_LABEL[t]}
+                                  </option>
+                                ))}
+                              </select>
+                              {s.marginType !== "override" && s.marginType !== "pct" && (
+                                <select
+                                  value={s.marginCurrency}
+                                  onChange={(e) =>
+                                    update(l.id, {
+                                      marginCurrency: e.target.value as Currency,
+                                    })
+                                  }
+                                  className="h-6 px-1 rounded border border-zinc-300 text-[11px] bg-white"
+                                >
+                                  {(["GBP", "USD", "EUR", "AUD"] as Currency[]).map((c) => (
+                                    <option key={c} value={c}>
+                                      {c}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                              {s.marginType !== "override" && (
+                                <input
+                                  type="number"
+                                  value={s.marginValue}
+                                  step={0.5}
+                                  onChange={(e) =>
+                                    update(l.id, { marginValue: Number(e.target.value) })
+                                  }
+                                  className="w-16 h-6 px-1 text-right rounded border border-zinc-300 text-xs font-mono"
+                                />
+                              )}
+                              {s.marginType !== "pct" &&
+                                s.marginType !== "flat" &&
+                                s.marginType !== "override" && (
+                                  <span className="text-[10px] text-zinc-500">
+                                    × {unitCountFor(s.marginType)}
+                                  </span>
+                                )}
+                            </div>
+
+                            <span className="text-zinc-300">→</span>
+
+                            {/* Sell (editable) */}
+                            <div className="inline-flex items-center gap-1">
+                              <span className="text-[10px] text-zinc-500">Sell</span>
+                              <span className="text-[11px] text-emerald-700 font-mono">
+                                {s.costCurrency}
+                              </span>
+                              <input
+                                type="number"
+                                value={Number(sell.toFixed(2))}
+                                step={0.01}
+                                onChange={(e) => setSell(l.id, l, Number(e.target.value))}
+                                className="w-24 h-6 px-1 text-right rounded border border-emerald-300 bg-emerald-50/40 text-xs font-mono text-emerald-800"
+                              />
+                            </div>
+
+                            {/* Convert preview */}
+                            {showConvert && (
+                              <span className="text-[11px] text-zinc-500 inline-flex items-center gap-0.5">
+                                ≈
+                                <span className="font-mono text-zinc-700">
+                                  {fmtCurrency(sellInOut, outputCurrency)}
+                                </span>
+                              </span>
                             )}
                           </div>
 
-                          <div className="col-span-2 text-right font-mono text-zinc-600">
-                            {fmtCurrency(l.costAmount, l.currency)}
-                          </div>
-
-                          <div className="col-span-2 flex items-center gap-1">
-                            <input
-                              type="number"
-                              value={s.marginPct}
-                              step={0.5}
-                              onChange={(e) =>
-                                update(l.id, { marginPct: Number(e.target.value) })
-                              }
-                              className="w-14 h-7 px-1 text-right rounded border border-zinc-300 text-xs font-mono"
-                            />
-                            <span className="text-zinc-400 text-[11px]">%</span>
-                          </div>
-
-                          <div className="col-span-2 text-right font-mono text-emerald-700">
-                            {fmtCurrency(sell, l.currency)}
-                          </div>
-
-                          <div className="col-span-1 flex items-center justify-end gap-0.5">
-                            <button
-                              onClick={() => update(l.id, { visible: !s.visible })}
-                              title={s.visible ? "Hide from customer" : "Show to customer"}
-                              className={`size-6 rounded inline-flex items-center justify-center ${
-                                s.visible
-                                  ? "text-emerald-700 hover:bg-emerald-50"
-                                  : "text-zinc-400 hover:bg-zinc-100"
-                              }`}
-                            >
-                              {s.visible ? (
-                                <Eye className="size-3.5" />
-                              ) : (
-                                <EyeOff className="size-3.5" />
-                              )}
-                            </button>
-                            <button
-                              onClick={() => {
-                                const next =
-                                  s.consolidateAs === null
-                                    ? existingGroups[0] ?? "Group"
-                                    : null;
-                                update(l.id, { consolidateAs: next });
-                              }}
-                              title={
-                                s.consolidateAs
-                                  ? "Un-consolidate"
-                                  : "Roll into a group on the customer view"
-                              }
-                              className={`size-6 rounded inline-flex items-center justify-center ${
-                                s.consolidateAs
-                                  ? "text-violet-700 hover:bg-violet-50"
-                                  : "text-zinc-400 hover:bg-zinc-100"
-                              }`}
-                            >
-                              <Merge className="size-3.5" />
-                            </button>
-                          </div>
+                          {s.consolidateAs && (
+                            <div className="text-[10px] text-violet-700">
+                              ↳ rolled up as <b>{s.consolidateAs}</b> on customer view
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -669,28 +1012,46 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
               <div className="bg-white border rounded p-4 space-y-2 text-xs">
                 <div className="flex items-center justify-between text-zinc-500 text-[11px] uppercase tracking-wide pb-1 border-b">
                   <span>Description</span>
-                  <span>Amount</span>
+                  <span>{outputCurrency} amount</span>
                 </div>
                 {customerView.map((line, i) => (
                   <div key={i} className="flex items-start justify-between gap-2 py-0.5">
-                    <span className="text-zinc-700">{line.label}</span>
-                    <span className="font-mono">{fmtCurrency(line.sell, "GBP")}</span>
+                    <span className="text-zinc-700">
+                      {line.label}
+                      {line.lines > 1 && (
+                        <span className="text-[10px] text-zinc-400 ml-1">
+                          ({line.lines} charges)
+                        </span>
+                      )}
+                    </span>
+                    <span className="font-mono">{fmtCurrency(line.sell, outputCurrency)}</span>
                   </div>
                 ))}
                 <Separator />
                 <div className="flex items-start justify-between font-medium">
-                  <span>Total all-in</span>
-                  <span className="font-mono">{fmtCurrency(totals.sell, "GBP")}</span>
+                  <span>Total all-in ({outputCurrency})</span>
+                  <span className="font-mono">{fmtCurrency(totals.sell, outputCurrency)}</span>
                 </div>
-                <div className="text-[10px] text-zinc-400 italic pt-1">
-                  Sample - exact wording matches the PDF / email cover.
+                <div className="flex items-start justify-between text-[10px] text-zinc-500 pt-1">
+                  <span>Quote valid until</span>
+                  <span className="font-mono">{validUntilDisplay}</span>
+                </div>
+                <div className="text-[10px] text-zinc-400 italic pt-1 leading-relaxed">
+                  Charges are originally invoiced in their respective
+                  currencies (USD ocean freight, GBP UK local, etc.) and
+                  converted at today's mid-market rate. Total is binding
+                  in {outputCurrency} until the validity date above.
                 </div>
               </div>
 
               <div className="text-[11px] text-zinc-500 mt-3 leading-relaxed">
                 Lines marked hidden are kept on file for audit / margin
                 analysis but never shown to the customer. Consolidated
-                lines are summed and shown under the group label only.
+                lines are summed in {outputCurrency} and shown under the
+                group label only. FX rates from XE / fallback sources
+                stored in <span className="font-mono">geo.fx_rates</span>;{" "}
+                <span className="font-mono">geo.convert_amount()</span> handles
+                the lookup.
               </div>
             </div>
           </div>
