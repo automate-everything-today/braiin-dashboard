@@ -112,8 +112,14 @@ interface SiblingGroup {
   sourceInbox?: string;
   receivedAt: number;
   splitConfidence: number; // 0-1, surfaced when AI made the split call
+  operatorReviewed: boolean; // false = parent row shows "Review split" CTA
   children: InboxRow[];
 }
+
+// Below this threshold, operator must confirm the split before the
+// children are treated as live drafts. Matches the application-side
+// rule that classify-email auto-creates only on high confidence.
+const SPLIT_REVIEW_THRESHOLD = 0.85;
 
 type InboxEntry =
   | { kind: "single"; row: InboxRow }
@@ -318,6 +324,7 @@ const SIBLING_GROUPS: SiblingGroup[] = [
     sourceInbox: "rob@",
     receivedAt: 26,
     splitConfidence: 0.94,
+    operatorReviewed: true,
     children: [
       {
         id: "BR-2026-0428-1244-1",
@@ -402,6 +409,54 @@ const SIBLING_GROUPS: SiblingGroup[] = [
         topRecommendation: "Lufthansa Cargo · £4,210",
         margin: "+13%",
         siblingIntent: "Hand-carry",
+      },
+    ],
+  },
+  {
+    // LOW-CONFIDENCE example: AI thinks this is two separate quotes
+    // (Italy ocean leg + UK road delivery) but isn't sure if customer
+    // wants a combined door-to-door quote or two separate quotes.
+    // Operator must review before children become live.
+    groupId: "GRP-2026-0428-BW01",
+    customer: "Bewlay Industrial",
+    customerYTD: "£34k",
+    origin: "ITGOA",
+    destination: "GBLEE",
+    source: "email",
+    sourceInbox: "ops@",
+    receivedAt: 9,
+    splitConfidence: 0.62,
+    operatorReviewed: false,
+    children: [
+      {
+        id: "BR-2026-0428-1248-1",
+        customer: "Bewlay Industrial",
+        customerYTD: "£34k",
+        origin: "ITGOA",
+        destination: "GBFXT",
+        mode: "Sea FCL",
+        equipment: "1× 40HC",
+        status: "new",
+        source: "email",
+        sourceInbox: "ops@",
+        enteredStateAt: 9,
+        receivedAt: 9,
+        siblingIntent: "Sea Genoa-Felixstowe",
+      },
+      {
+        id: "BR-2026-0428-1248-2",
+        customer: "Bewlay Industrial",
+        customerYTD: "£34k",
+        origin: "GBFXT",
+        destination: "GBLEE",
+        mode: "Road",
+        equipment: "1× 40HC",
+        status: "new",
+        source: "email",
+        sourceInbox: "ops@",
+        enteredStateAt: 9,
+        receivedAt: 9,
+        siblingIntent: "Road Felixstowe-Leeds",
       },
     ],
   },
@@ -1594,9 +1649,20 @@ export default function QuoteInboxPage() {
                                 </span>
                               )}
                             </div>
-                            <div className="text-[10px] text-violet-700 mt-0.5 flex items-center gap-1">
+                            <div
+                              className={`text-[10px] mt-0.5 flex items-center gap-1 ${
+                                g.splitConfidence < SPLIT_REVIEW_THRESHOLD
+                                  ? "text-orange-700"
+                                  : "text-violet-700"
+                              }`}
+                            >
                               <Sparkles className="size-2.5" />
                               split by AI · {Math.round(g.splitConfidence * 100)}% confidence
+                              {g.splitConfidence < SPLIT_REVIEW_THRESHOLD && !g.operatorReviewed && (
+                                <span className="ml-1 px-1 py-0.5 bg-orange-100 text-orange-800 rounded text-[9px] uppercase tracking-wide">
+                                  needs review
+                                </span>
+                              )}
                             </div>
                           </TableCell>
                           <TableCell>
@@ -1610,23 +1676,44 @@ export default function QuoteInboxPage() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            <div className="text-[11px] text-zinc-600">
-                              {g.children.filter((c) => c.status === "recommended").length} ready to send,{" "}
-                              {g.children.filter((c) => c.status === "sourcing").length} sourcing
-                            </div>
+                            {g.splitConfidence < SPLIT_REVIEW_THRESHOLD && !g.operatorReviewed ? (
+                              <div className="text-[11px] text-orange-700">
+                                AI suggested split - confirm before drafts go live
+                              </div>
+                            ) : (
+                              <div className="text-[11px] text-zinc-600">
+                                {g.children.filter((c) => c.status === "recommended").length} ready to send,{" "}
+                                {g.children.filter((c) => c.status === "sourcing").length} sourcing
+                              </div>
+                            )}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-7 text-xs"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleGroup(g.groupId);
-                              }}
-                            >
-                              {isOpen ? "Collapse" : "Expand"}
-                            </Button>
+                            {g.splitConfidence < SPLIT_REVIEW_THRESHOLD && !g.operatorReviewed ? (
+                              <a
+                                href={`/dev/quote-split-review?group=${g.groupId}`}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Button
+                                  size="sm"
+                                  className="h-7 text-xs bg-orange-600 hover:bg-orange-700"
+                                >
+                                  <Layers className="size-3 mr-1" />
+                                  Review split
+                                </Button>
+                              </a>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-xs"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleGroup(g.groupId);
+                                }}
+                              >
+                                {isOpen ? "Collapse" : "Expand"}
+                              </Button>
+                            )}
                           </TableCell>
                         </TableRow>
                       );
