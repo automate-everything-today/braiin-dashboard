@@ -18,6 +18,7 @@ import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
 import {
   Table,
   TableBody,
@@ -29,9 +30,9 @@ import {
 import { PageGuard } from "@/components/page-guard";
 import {
   ArrowLeftRight,
-  ArrowRight,
   Calculator,
   Layers,
+  Pencil,
   Percent,
   Plane,
   Plus,
@@ -39,7 +40,9 @@ import {
   Settings2,
   Ship,
   Sparkles,
+  Trash2,
   Truck,
+  X,
 } from "lucide-react";
 
 const PILL_SM =
@@ -457,6 +460,428 @@ const RULES: MarginRule[] = [
   },
 ];
 
+// ============================================================
+// Edit / add slide-in
+// ============================================================
+
+const ALL_METHODS: MarkupMethod[] = [
+  "pct",
+  "flat",
+  "per_cbm",
+  "per_kg",
+  "per_chargeable_weight",
+  "per_wm",
+  "per_container",
+  "per_container_20",
+  "per_container_40",
+  "per_pallet",
+  "per_bill",
+  "per_hs_code",
+  "per_shipment",
+  "pct_of_line",
+  "currency_conditional",
+  "override",
+  "on_cost",
+];
+
+interface RuleEditPanelProps {
+  draft: MarginRule | null;
+  isNew: boolean;
+  onClose: () => void;
+  onSave: (next: MarginRule) => void;
+  onDelete: ((ruleId: string) => void) | null;
+}
+
+function MarginRuleEditPanel({
+  draft,
+  isNew,
+  onClose,
+  onSave,
+  onDelete,
+}: RuleEditPanelProps) {
+  const [working, setWorking] = useState<MarginRule | null>(draft);
+  const draftKey = draft ? `${draft.ruleId}-${isNew}` : "";
+  const [boundKey, setBoundKey] = useState(draftKey);
+  if (draftKey !== boundKey) {
+    setBoundKey(draftKey);
+    setWorking(draft);
+  }
+
+  if (!working) return null;
+
+  const set = <K extends keyof MarginRule>(k: K, v: MarginRule[K]) =>
+    setWorking({ ...working, [k]: v });
+
+  const setOptional = <K extends keyof MarginRule>(
+    k: K,
+    raw: string,
+    asNumber = false,
+  ) => {
+    if (raw === "") {
+      const next = { ...working };
+      delete next[k];
+      setWorking(next);
+    } else {
+      set(k, (asNumber ? Number(raw) : raw) as MarginRule[K]);
+    }
+  };
+
+  const priorityNow = rulePriority(working);
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div
+        className="flex-1 bg-zinc-900/30 backdrop-blur-[1px]"
+        onClick={onClose}
+      />
+      <div className="w-[680px] bg-white border-l border-zinc-200 flex flex-col shadow-2xl">
+        <div className="border-b px-5 py-4 flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
+              <Percent className="size-3.5" />
+              {isNew ? "Add margin rule" : "Edit margin rule"}
+              {!isNew && (
+                <>
+                  <span className="text-zinc-300">·</span>
+                  <span className="font-mono">{working.ruleId}</span>
+                </>
+              )}
+            </div>
+            <div className="font-medium">{working.name || "(unnamed rule)"}</div>
+            <div className="text-[11px] text-zinc-500 mt-1">
+              Precedence:{" "}
+              <span className="font-mono text-zinc-700">{priorityNow}</span>{" "}
+              non-NULL scope field{priorityNow === 1 ? "" : "s"} ·{" "}
+              {priorityNow === 0 ? "catch-all default" : "more specific = higher priority"}
+            </div>
+          </div>
+          <Button size="sm" variant="ghost" onClick={onClose} className="size-8 p-0">
+            <X className="size-4" />
+          </Button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+          {/* Identity */}
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+              Identity
+            </div>
+            <div className="space-y-1">
+              <label className="text-[11px] text-zinc-600 block">Rule name</label>
+              <input
+                type="text"
+                value={working.name}
+                onChange={(e) => set("name", e.target.value)}
+                placeholder="FCL Export - Collection per container"
+                className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[11px] text-zinc-600 block">
+                Description (optional, shown to operator)
+              </label>
+              <input
+                type="text"
+                value={working.description ?? ""}
+                onChange={(e) => set("description", e.target.value)}
+                placeholder="0.13 GBP/kg with min charge of GBP 35"
+                className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={working.isActive}
+                onChange={(e) => set("isActive", e.target.checked)}
+                className="size-3.5 accent-violet-600"
+              />
+              Active (uncheck to soft-disable without deleting)
+            </label>
+          </div>
+
+          <Separator />
+
+          {/* Scope */}
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+              Scope (every set field must match for the rule to apply)
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">Customer</label>
+                <input
+                  type="text"
+                  value={working.customerName ?? ""}
+                  onChange={(e) => setOptional("customerName", e.target.value)}
+                  placeholder="(any)"
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">Carrier</label>
+                <input
+                  type="text"
+                  value={working.carrierName ?? ""}
+                  onChange={(e) => setOptional("carrierName", e.target.value)}
+                  placeholder="(any)"
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">Mode</label>
+                <select
+                  value={working.mode ?? ""}
+                  onChange={(e) =>
+                    setOptional("mode", e.target.value)
+                  }
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+                >
+                  <option value="">(any)</option>
+                  <option value="sea_fcl">Sea FCL</option>
+                  <option value="sea_lcl">Sea LCL</option>
+                  <option value="air">Air</option>
+                  <option value="road">Road</option>
+                  <option value="rail">Rail</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">Direction</label>
+                <select
+                  value={working.direction ?? ""}
+                  onChange={(e) => setOptional("direction", e.target.value)}
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+                >
+                  <option value="">(any)</option>
+                  <option value="import">Import</option>
+                  <option value="export">Export</option>
+                  <option value="crosstrade">Crosstrade</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">
+                  Origin country (ISO-2)
+                </label>
+                <input
+                  type="text"
+                  value={working.originCountry ?? ""}
+                  onChange={(e) => setOptional("originCountry", e.target.value.toUpperCase())}
+                  placeholder="GB"
+                  maxLength={2}
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm font-mono bg-white"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">
+                  Destination country (ISO-2)
+                </label>
+                <input
+                  type="text"
+                  value={working.destinationCountry ?? ""}
+                  onChange={(e) => setOptional("destinationCountry", e.target.value.toUpperCase())}
+                  placeholder="CN"
+                  maxLength={2}
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm font-mono bg-white"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">Section</label>
+                <select
+                  value={working.macroGroup ?? ""}
+                  onChange={(e) => setOptional("macroGroup", e.target.value)}
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+                >
+                  <option value="">(any)</option>
+                  <option value="origin_exw">Origin &amp; EXW</option>
+                  <option value="freight">Freight</option>
+                  <option value="destination_delivery">
+                    Destination &amp; Delivery
+                  </option>
+                  <option value="insurance_other">Insurance &amp; Other</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">
+                  Charge code (Braiin canonical)
+                </label>
+                <input
+                  type="text"
+                  value={working.chargeCode ?? ""}
+                  onChange={(e) => setOptional("chargeCode", e.target.value)}
+                  placeholder="(any)"
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm font-mono bg-white"
+                />
+              </div>
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* Markup */}
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+              Markup
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="space-y-1 col-span-2">
+                <label className="text-[11px] text-zinc-600 block">Method</label>
+                <select
+                  value={working.markupMethod}
+                  onChange={(e) =>
+                    set("markupMethod", e.target.value as MarkupMethod)
+                  }
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+                >
+                  {ALL_METHODS.map((m) => (
+                    <option key={m} value={m}>
+                      {m} - {METHOD_LABEL[m]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">Currency</label>
+                <select
+                  value={working.markupCurrency}
+                  onChange={(e) => set("markupCurrency", e.target.value)}
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+                >
+                  <option value="GBP">GBP £</option>
+                  <option value="USD">USD $</option>
+                  <option value="EUR">EUR €</option>
+                  <option value="AUD">AUD A$</option>
+                </select>
+              </div>
+            </div>
+            {working.markupMethod !== "currency_conditional" &&
+              working.markupMethod !== "on_cost" && (
+                <div className="space-y-1">
+                  <label className="text-[11px] text-zinc-600 block">Value</label>
+                  <input
+                    type="number"
+                    value={working.markupValue}
+                    step={0.01}
+                    onChange={(e) => set("markupValue", Number(e.target.value))}
+                    className="w-32 h-9 px-2 text-right rounded border border-zinc-300 text-sm font-mono bg-white"
+                  />
+                  <span className="text-[11px] text-zinc-500 ml-2">
+                    {METHOD_LABEL[working.markupMethod]}
+                  </span>
+                </div>
+              )}
+            {working.markupMethod === "currency_conditional" && (
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">
+                  Per-currency rates (e.g. GBP=10, USD=15, EUR=15)
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {(["GBP", "USD", "EUR", "AUD"] as const).map((c) => (
+                    <div key={c}>
+                      <label className="text-[10px] text-zinc-500">
+                        {c}
+                      </label>
+                      <input
+                        type="number"
+                        value={working.currencyRates?.[c] ?? ""}
+                        step={0.01}
+                        onChange={(e) => {
+                          const next = { ...(working.currencyRates ?? {}) };
+                          if (e.target.value === "") delete next[c];
+                          else next[c] = Number(e.target.value);
+                          setWorking({ ...working, currencyRates: next });
+                        }}
+                        className="w-full h-8 px-2 text-right rounded border border-zinc-300 text-xs font-mono bg-white"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <Separator />
+
+          {/* Guardrails */}
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+              Guardrails
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">
+                  Min charge amount
+                </label>
+                <input
+                  type="number"
+                  value={working.minChargeAmount ?? ""}
+                  step={0.01}
+                  onChange={(e) =>
+                    setOptional("minChargeAmount", e.target.value, true)
+                  }
+                  placeholder="(none)"
+                  className="w-full h-9 px-2 text-right rounded border border-zinc-300 text-sm font-mono bg-white"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">
+                  Min charge currency
+                </label>
+                <select
+                  value={working.minChargeCurrency ?? ""}
+                  onChange={(e) =>
+                    setOptional("minChargeCurrency", e.target.value)
+                  }
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+                >
+                  <option value="">(none)</option>
+                  <option value="GBP">GBP</option>
+                  <option value="USD">USD</option>
+                  <option value="EUR">EUR</option>
+                  <option value="AUD">AUD</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t px-5 py-3 flex items-center justify-between bg-zinc-50">
+          <div>
+            {!isNew && onDelete && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-rose-700 hover:bg-rose-50"
+                onClick={() => {
+                  onDelete(working.ruleId);
+                  onClose();
+                }}
+              >
+                <Trash2 className="size-3.5 mr-1.5" />
+                Delete rule
+              </Button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-emerald-600 hover:bg-emerald-700"
+              disabled={!working.name.trim()}
+              onClick={() => {
+                onSave(working);
+                onClose();
+              }}
+            >
+              {isNew ? "Create rule" : "Save changes"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function rulePriority(r: MarginRule): number {
   let n = 0;
   if (r.customerName) n++;
@@ -474,14 +899,59 @@ function rulePriority(r: MarginRule): number {
 // Page
 // ============================================================
 
+const EMPTY_RULE: MarginRule = {
+  ruleId: "",
+  name: "",
+  markupMethod: "pct",
+  markupValue: 10,
+  markupCurrency: "GBP",
+  isActive: true,
+};
+
+function nextRuleId(existing: MarginRule[]): string {
+  const max = existing.reduce((n, r) => {
+    const m = r.ruleId.match(/RULE-(\d+)/);
+    if (!m) return n;
+    return Math.max(n, parseInt(m[1], 10));
+  }, 0);
+  return `RULE-${String(max + 1).padStart(3, "0")}`;
+}
+
 export default function MarginsPage() {
   const [view, setView] = useState<"matrix" | "list">("matrix");
   const [query, setQuery] = useState("");
 
+  // Mutable state - edits persist within session.
+  const [rules, setRules] = useState<MarginRule[]>(RULES);
+  const [editing, setEditing] = useState<{ draft: MarginRule; isNew: boolean } | null>(
+    null,
+  );
+
+  function saveRule(next: MarginRule) {
+    setRules((prev) => {
+      const existing = prev.findIndex((r) => r.ruleId === next.ruleId);
+      if (existing >= 0) {
+        const copy = [...prev];
+        copy[existing] = next;
+        return copy;
+      }
+      const idAssigned = next.ruleId
+        ? next
+        : { ...next, ruleId: nextRuleId(prev) };
+      return [...prev, idAssigned];
+    });
+  }
+
+  function deleteRule(ruleId: string) {
+    setRules((prev) => prev.filter((r) => r.ruleId !== ruleId));
+  }
+
   const sortedRules = useMemo(
     () =>
-      [...RULES].sort((a, b) => rulePriority(b) - rulePriority(a) || a.name.localeCompare(b.name)),
-    [],
+      [...rules].sort(
+        (a, b) => rulePriority(b) - rulePriority(a) || a.name.localeCompare(b.name),
+      ),
+    [rules],
   );
 
   const filtered = useMemo(() => {
@@ -548,7 +1018,16 @@ export default function MarginsPage() {
                 <Calculator className="size-3.5 mr-1.5" />
                 Test calculator
               </Button>
-              <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700">
+              <Button
+                size="sm"
+                className="bg-emerald-600 hover:bg-emerald-700"
+                onClick={() =>
+                  setEditing({
+                    draft: { ...EMPTY_RULE, ruleId: nextRuleId(rules) },
+                    isNew: true,
+                  })
+                }
+              >
                 <Plus className="size-3.5 mr-1.5" />
                 Add rule
               </Button>
@@ -661,11 +1140,14 @@ export default function MarginsPage() {
                                   {cellRules.map((r) => (
                                     <div
                                       key={r.ruleId}
+                                      onClick={() =>
+                                        setEditing({ draft: r, isNew: false })
+                                      }
                                       className={`border-l-2 ${
                                         r.macroGroup
                                           ? MACRO_TONE[r.macroGroup]
                                           : "border-l-zinc-200 bg-zinc-50"
-                                      } pl-2 py-1 rounded-r`}
+                                      } pl-2 py-1 rounded-r cursor-pointer hover:ring-1 hover:ring-violet-300`}
                                     >
                                       <div className="flex items-center justify-between gap-2">
                                         <span className="text-zinc-700 truncate text-[11px]">
@@ -726,7 +1208,11 @@ export default function MarginsPage() {
                   </TableHeader>
                   <TableBody>
                     {filtered.map((r) => (
-                      <TableRow key={r.ruleId} className="hover:bg-zinc-50">
+                      <TableRow
+                        key={r.ruleId}
+                        className="hover:bg-zinc-50 cursor-pointer group"
+                        onClick={() => setEditing({ draft: r, isNew: false })}
+                      >
                         <TableCell>
                           <Badge
                             className={`${PILL_SM} bg-zinc-100 text-zinc-600 font-mono`}
@@ -736,7 +1222,10 @@ export default function MarginsPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <div className="font-medium text-sm">{r.name}</div>
+                          <div className="font-medium text-sm inline-flex items-center gap-1.5">
+                            {r.name}
+                            <Pencil className="size-3 text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
                           {r.description && (
                             <div className="text-[11px] text-zinc-500 italic mt-0.5">
                               {r.description}
@@ -869,13 +1358,22 @@ export default function MarginsPage() {
           </Card>
 
           <div className="text-[11px] text-zinc-400 text-center pb-6">
-            Mock-up · static data · production reads{" "}
+            Click any rule (matrix cell or row) to edit · changes persist
+            for this session only · production reads{" "}
             <span className="font-mono">quotes.margin_rules</span> with{" "}
             <span className="font-mono">rule_priority</span> auto-computed by
             schema. Rules seeded from the Wisor Profit Guide template in{" "}
             <span className="font-mono">docs/wisor/Margin Template for Wisor.xlsx</span>.
           </div>
         </div>
+
+        <MarginRuleEditPanel
+          draft={editing?.draft ?? null}
+          isNew={editing?.isNew ?? false}
+          onClose={() => setEditing(null)}
+          onSave={saveRule}
+          onDelete={editing && !editing.isNew ? deleteRule : null}
+        />
       </div>
     </PageGuard>
   );

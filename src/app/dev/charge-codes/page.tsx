@@ -28,14 +28,18 @@ import { PageGuard } from "@/components/page-guard";
 import {
   ArrowRight,
   ListChecks,
+  Pencil,
   Plane,
   Plus,
   Search,
   Ship,
   Sparkles,
   Tag,
+  Trash2,
   Truck,
+  X,
 } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 import {
   CHARGE_CODES,
   type ChargeCode,
@@ -109,7 +113,350 @@ function ModeIcons({ modes }: { modes: string[] }) {
 // Page
 // ============================================================
 
+// ============================================================
+// Edit / add slide-in
+// ============================================================
+
+const ALL_MODES = ["sea_fcl", "sea_lcl", "air", "road", "rail"] as const;
+const ALL_DIRECTIONS = ["import", "export", "crosstrade"] as const;
+
+interface EditPanelProps {
+  draft: ChargeCode | null;
+  isNew: boolean;
+  onClose: () => void;
+  onSave: (next: ChargeCode) => void;
+  onDelete: ((braiinCode: string) => void) | null;
+}
+
+function ChargeCodeEditPanel({
+  draft,
+  isNew,
+  onClose,
+  onSave,
+  onDelete,
+}: EditPanelProps) {
+  const [working, setWorking] = useState<ChargeCode | null>(draft);
+
+  // Reset form whenever the draft changes (new row clicked).
+  const draftKey = draft ? `${draft.braiinCode}-${isNew}` : "";
+  const [boundKey, setBoundKey] = useState(draftKey);
+  if (draftKey !== boundKey) {
+    setBoundKey(draftKey);
+    setWorking(draft);
+  }
+
+  if (!working) return null;
+
+  const set = <K extends keyof ChargeCode>(k: K, v: ChargeCode[K]) =>
+    setWorking({ ...working, [k]: v });
+
+  function toggleMode(m: string) {
+    if (!working) return;
+    const next = working.applicableModes.includes(m)
+      ? working.applicableModes.filter((x) => x !== m)
+      : [...working.applicableModes, m];
+    setWorking({ ...working, applicableModes: next });
+  }
+
+  function toggleDirection(d: string) {
+    if (!working) return;
+    const next = working.applicableDirections.includes(d)
+      ? working.applicableDirections.filter((x) => x !== d)
+      : [...working.applicableDirections, d];
+    setWorking({ ...working, applicableDirections: next });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div
+        className="flex-1 bg-zinc-900/30 backdrop-blur-[1px]"
+        onClick={onClose}
+      />
+      <div className="w-[640px] bg-white border-l border-zinc-200 flex flex-col shadow-2xl">
+        {/* Header */}
+        <div className="border-b px-5 py-4 flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
+              <ListChecks className="size-3.5" />
+              {isNew ? "Add charge code" : "Edit charge code"}
+              {!isNew && (
+                <>
+                  <span className="text-zinc-300">·</span>
+                  <span className="font-mono">{working.braiinCode}</span>
+                </>
+              )}
+            </div>
+            <div className="font-medium">{working.description || "(unnamed)"}</div>
+          </div>
+          <Button size="sm" variant="ghost" onClick={onClose} className="size-8 p-0">
+            <X className="size-4" />
+          </Button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+          {/* Identity */}
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+              Identity
+            </div>
+            <div className="space-y-1">
+              <label className="text-[11px] text-zinc-600 block">
+                Braiin code{" "}
+                {isNew ? (
+                  ""
+                ) : (
+                  <span className="text-zinc-400">(read-only after create)</span>
+                )}
+              </label>
+              <input
+                type="text"
+                value={working.braiinCode}
+                onChange={(e) => set("braiinCode", e.target.value)}
+                disabled={!isNew}
+                placeholder="origin_thc"
+                className="w-full h-9 px-2 rounded border border-zinc-300 text-sm font-mono bg-white disabled:bg-zinc-100 disabled:text-zinc-500"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[11px] text-zinc-600 block">Description</label>
+              <input
+                type="text"
+                value={working.description}
+                onChange={(e) => set("description", e.target.value)}
+                placeholder="Origin terminal handling charges"
+                className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+              />
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* Classification */}
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+              Classification
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">
+                  Billing type
+                </label>
+                <select
+                  value={working.billingType}
+                  onChange={(e) =>
+                    set("billingType", e.target.value as ChargeCode["billingType"])
+                  }
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+                >
+                  <option value="margin">Margin (marked up)</option>
+                  <option value="revenue">Revenue (flat fee)</option>
+                  <option value="disbursement">Disbursement (pass-through)</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">Section</label>
+                <select
+                  value={working.macroGroup}
+                  onChange={(e) =>
+                    set("macroGroup", e.target.value as ChargeCode["macroGroup"])
+                  }
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+                >
+                  <option value="origin_exw">Origin &amp; EXW</option>
+                  <option value="freight">Freight</option>
+                  <option value="destination_delivery">
+                    Destination &amp; Delivery
+                  </option>
+                  <option value="insurance_other">Insurance &amp; Other</option>
+                </select>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[11px] text-zinc-600 block">
+                Default markup % (overridable per quote / per rule)
+              </label>
+              <input
+                type="number"
+                value={working.defaultMarginPct}
+                step={0.5}
+                onChange={(e) =>
+                  set("defaultMarginPct", Number(e.target.value))
+                }
+                className="w-32 h-9 px-2 text-right rounded border border-zinc-300 text-sm font-mono bg-white"
+              />
+              <span className="text-[11px] text-zinc-500 ml-2">%</span>
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* Applicability */}
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+              Applicable modes
+            </div>
+            <div className="grid grid-cols-3 gap-1">
+              {ALL_MODES.map((m) => (
+                <label
+                  key={m}
+                  className="flex items-center gap-2 text-xs cursor-pointer hover:bg-zinc-50 px-2 py-1 rounded border border-zinc-200"
+                >
+                  <input
+                    type="checkbox"
+                    checked={working.applicableModes.includes(m)}
+                    onChange={() => toggleMode(m)}
+                    className="size-3.5 accent-violet-600"
+                  />
+                  <span>{m.replace("_", " ")}</span>
+                </label>
+              ))}
+            </div>
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500 mt-3">
+              Applicable directions
+            </div>
+            <div className="grid grid-cols-3 gap-1">
+              {ALL_DIRECTIONS.map((d) => (
+                <label
+                  key={d}
+                  className="flex items-center gap-2 text-xs cursor-pointer hover:bg-zinc-50 px-2 py-1 rounded border border-zinc-200"
+                >
+                  <input
+                    type="checkbox"
+                    checked={working.applicableDirections.includes(d)}
+                    onChange={() => toggleDirection(d)}
+                    className="size-3.5 accent-violet-600"
+                  />
+                  <span>{d}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* Source TMS */}
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+              Source TMS provenance
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">
+                  Source TMS
+                </label>
+                <select
+                  value={working.tmsOrigin}
+                  onChange={(e) => set("tmsOrigin", e.target.value as TmsOrigin)}
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm bg-white"
+                >
+                  <option value="cargowise">Cargowise</option>
+                  <option value="magaya">Magaya</option>
+                  <option value="descartes">Descartes</option>
+                  <option value="native">Braiin native</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-zinc-600 block">
+                  TMS code
+                </label>
+                <input
+                  type="text"
+                  value={working.cwCode}
+                  onChange={(e) => set("cwCode", e.target.value)}
+                  placeholder="AFRT"
+                  className="w-full h-9 px-2 rounded border border-zinc-300 text-sm font-mono bg-white"
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[11px] text-zinc-600 block">
+                Source TMS metadata (CW department filter, etc.)
+              </label>
+              <input
+                type="text"
+                value={working.cwDepartments.join(", ")}
+                onChange={(e) =>
+                  set(
+                    "cwDepartments",
+                    e.target.value
+                      .split(",")
+                      .map((s) => s.trim())
+                      .filter(Boolean),
+                  )
+                }
+                placeholder="FEA, FIA, ALL"
+                className="w-full h-9 px-2 rounded border border-zinc-300 text-sm font-mono bg-white"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="border-t px-5 py-3 flex items-center justify-between bg-zinc-50">
+          <div>
+            {!isNew && onDelete && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-rose-700 hover:bg-rose-50"
+                onClick={() => {
+                  onDelete(working.braiinCode);
+                  onClose();
+                }}
+              >
+                <Trash2 className="size-3.5 mr-1.5" />
+                Delete
+              </Button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-emerald-600 hover:bg-emerald-700"
+              disabled={!working.braiinCode || !working.description}
+              onClick={() => {
+                onSave(working);
+                onClose();
+              }}
+            >
+              {isNew ? "Create code" : "Save changes"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Page
+// ============================================================
+
+const EMPTY_DRAFT: ChargeCode = {
+  braiinCode: "",
+  description: "",
+  billingType: "margin",
+  macroGroup: "origin_exw",
+  defaultMarginPct: 100,
+  applicableModes: ["sea_fcl", "sea_lcl", "air", "road", "rail"],
+  applicableDirections: ["import", "export", "crosstrade"],
+  tmsOrigin: "native",
+  cwCode: "",
+  cwDepartments: ["ALL"],
+};
+
 export default function ChargeCodesPage() {
+  // Mutable copy of the dictionary - edits persist within the session.
+  // Production wires this to quotes.charge_codes via API.
+  const [codes, setCodes] = useState<ChargeCode[]>(CHARGE_CODES);
+  const [editing, setEditing] = useState<{ draft: ChargeCode; isNew: boolean } | null>(
+    null,
+  );
+
   const [query, setQuery] = useState("");
   const [billingFilter, setBillingFilter] =
     useState<"all" | ChargeCode["billingType"]>("all");
@@ -118,9 +465,25 @@ export default function ChargeCodesPage() {
   const [modeFilter, setModeFilter] = useState<string>("all");
   const [originFilter, setOriginFilter] = useState<"all" | TmsOrigin>("all");
 
+  function saveCode(next: ChargeCode) {
+    setCodes((prev) => {
+      const existing = prev.findIndex((c) => c.braiinCode === next.braiinCode);
+      if (existing >= 0) {
+        const copy = [...prev];
+        copy[existing] = next;
+        return copy;
+      }
+      return [next, ...prev];
+    });
+  }
+
+  function deleteCode(braiinCode: string) {
+    setCodes((prev) => prev.filter((c) => c.braiinCode !== braiinCode));
+  }
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return CHARGE_CODES.filter((c) => {
+    return codes.filter((c) => {
       if (billingFilter !== "all" && c.billingType !== billingFilter) return false;
       if (macroFilter !== "all" && c.macroGroup !== macroFilter) return false;
       if (originFilter !== "all" && c.tmsOrigin !== originFilter) return false;
@@ -138,17 +501,17 @@ export default function ChargeCodesPage() {
 
   const counts = useMemo(() => {
     const byOrigin = new Map<TmsOrigin, number>();
-    for (const c of CHARGE_CODES) {
+    for (const c of codes) {
       byOrigin.set(c.tmsOrigin, (byOrigin.get(c.tmsOrigin) ?? 0) + 1);
     }
     return {
-      total: CHARGE_CODES.length,
-      margin: CHARGE_CODES.filter((c) => c.billingType === "margin").length,
-      revenue: CHARGE_CODES.filter((c) => c.billingType === "revenue").length,
-      disbursement: CHARGE_CODES.filter((c) => c.billingType === "disbursement").length,
+      total: codes.length,
+      margin: codes.filter((c) => c.billingType === "margin").length,
+      revenue: codes.filter((c) => c.billingType === "revenue").length,
+      disbursement: codes.filter((c) => c.billingType === "disbursement").length,
       byOrigin: Array.from(byOrigin.entries()).sort((a, b) => b[1] - a[1]),
     };
-  }, []);
+  }, [codes]);
 
   return (
     <PageGuard pageId="dev_charge_codes">
@@ -168,7 +531,11 @@ export default function ChargeCodesPage() {
                 <ArrowRight className="size-3.5 mr-1.5" />
                 TMS mappings
               </Button>
-              <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700">
+              <Button
+                size="sm"
+                className="bg-emerald-600 hover:bg-emerald-700"
+                onClick={() => setEditing({ draft: { ...EMPTY_DRAFT }, isNew: true })}
+              >
                 <Plus className="size-3.5 mr-1.5" />
                 Add code
               </Button>
@@ -367,10 +734,15 @@ export default function ChargeCodesPage() {
                 </TableHeader>
                 <TableBody>
                   {filtered.map((c) => (
-                    <TableRow key={c.braiinCode} className="hover:bg-zinc-50">
+                    <TableRow
+                      key={c.braiinCode}
+                      className="hover:bg-zinc-50 cursor-pointer group"
+                      onClick={() => setEditing({ draft: c, isNew: false })}
+                    >
                       <TableCell>
-                        <div className="font-mono text-[12px] text-zinc-800">
+                        <div className="font-mono text-[12px] text-zinc-800 inline-flex items-center gap-1.5">
                           {c.braiinCode}
+                          <Pencil className="size-3 text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity" />
                         </div>
                       </TableCell>
                       <TableCell>
@@ -468,11 +840,20 @@ export default function ChargeCodesPage() {
           </div>
 
           <div className="text-[11px] text-zinc-400 text-center pb-6">
-            Mock-up · static data · production reads{" "}
+            Click any row to edit · changes persist for this session only ·
+            production reads{" "}
             <span className="font-mono">quotes.charge_codes</span> +{" "}
-            <span className="font-mono">tms.charge_code_map</span>.
+            <span className="font-mono">tms.charge_code_map</span> via API.
           </div>
         </div>
+
+        <ChargeCodeEditPanel
+          draft={editing?.draft ?? null}
+          isNew={editing?.isNew ?? false}
+          onClose={() => setEditing(null)}
+          onSave={saveCode}
+          onDelete={editing && !editing.isNew ? deleteCode : null}
+        />
       </div>
     </PageGuard>
   );
