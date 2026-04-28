@@ -36,7 +36,11 @@ import {
   Tag,
   Truck,
 } from "lucide-react";
-import { CHARGE_CODES, type ChargeCode } from "@/lib/quotes/charge-codes-data";
+import {
+  CHARGE_CODES,
+  type ChargeCode,
+  type TmsOrigin,
+} from "@/lib/quotes/charge-codes-data";
 
 const PILL_SM =
   "text-[10px] px-1.5 py-0 leading-[18px] h-[18px] font-normal tracking-normal";
@@ -71,6 +75,24 @@ const MACRO_TONE: Record<ChargeCode["macroGroup"], string> = {
   insurance_other: "bg-zinc-100 text-zinc-700",
 };
 
+// TMS origin presentation. tms_origin records which TMS dictionary a
+// canonical Braiin code was lifted from. New TMS adapters (Magaya,
+// Descartes...) will add codes with their own origin tag. 'native'
+// is reserved for codes Braiin defines without a TMS counterpart.
+const TMS_ORIGIN_LABEL: Record<TmsOrigin, string> = {
+  cargowise: "Cargowise",
+  magaya: "Magaya",
+  descartes: "Descartes",
+  native: "Braiin native",
+};
+
+const TMS_ORIGIN_TONE: Record<TmsOrigin, string> = {
+  cargowise: "bg-violet-50 text-violet-800 border border-violet-200",
+  magaya: "bg-cyan-50 text-cyan-800 border border-cyan-200",
+  descartes: "bg-emerald-50 text-emerald-800 border border-emerald-200",
+  native: "bg-zinc-50 text-zinc-700 border border-zinc-200",
+};
+
 function ModeIcons({ modes }: { modes: string[] }) {
   return (
     <div className="inline-flex items-center gap-1 text-zinc-500">
@@ -94,12 +116,14 @@ export default function ChargeCodesPage() {
   const [macroFilter, setMacroFilter] =
     useState<"all" | ChargeCode["macroGroup"]>("all");
   const [modeFilter, setModeFilter] = useState<string>("all");
+  const [originFilter, setOriginFilter] = useState<"all" | TmsOrigin>("all");
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return CHARGE_CODES.filter((c) => {
       if (billingFilter !== "all" && c.billingType !== billingFilter) return false;
       if (macroFilter !== "all" && c.macroGroup !== macroFilter) return false;
+      if (originFilter !== "all" && c.tmsOrigin !== originFilter) return false;
       if (modeFilter !== "all" && !c.applicableModes.includes(modeFilter))
         return false;
       if (q.length > 0) {
@@ -110,14 +134,19 @@ export default function ChargeCodesPage() {
       }
       return true;
     });
-  }, [query, billingFilter, macroFilter, modeFilter]);
+  }, [query, billingFilter, macroFilter, modeFilter, originFilter]);
 
   const counts = useMemo(() => {
+    const byOrigin = new Map<TmsOrigin, number>();
+    for (const c of CHARGE_CODES) {
+      byOrigin.set(c.tmsOrigin, (byOrigin.get(c.tmsOrigin) ?? 0) + 1);
+    }
     return {
       total: CHARGE_CODES.length,
       margin: CHARGE_CODES.filter((c) => c.billingType === "margin").length,
       revenue: CHARGE_CODES.filter((c) => c.billingType === "revenue").length,
       disbursement: CHARGE_CODES.filter((c) => c.billingType === "disbursement").length,
+      byOrigin: Array.from(byOrigin.entries()).sort((a, b) => b[1] - a[1]),
     };
   }, []);
 
@@ -158,17 +187,36 @@ export default function ChargeCodesPage() {
                 </div>
                 Each row is a Braiin-side charge that flows into{" "}
                 <span className="font-mono">quotes.charge_lines</span>. TMS-specific
-                codes (Cargowise <span className="font-mono">AFRT</span>, Magaya
+                codes (Cargowise <span className="font-mono">AFRT</span>, Magaya{" "}
                 <span className="font-mono">FRT</span>, etc.) translate to these
                 via <span className="font-mono">tms.charge_code_map</span> so the
                 rate engine and quote document never know which TMS the cost came
-                from. Below are 107 codes seeded from the Cargowise dictionary.
+                from.
+                <br />
+                <br />
+                <span className="font-medium">Source provenance:</span> every code
+                is tagged with{" "}
+                <span className="font-mono">tms_origin</span> so we know which TMS
+                dictionary the canonical code was lifted from. All 107 entries
+                below are tagged{" "}
+                <Badge
+                  className={`${PILL_SM} ${TMS_ORIGIN_TONE.cargowise} font-mono`}
+                >
+                  Cargowise
+                </Badge>
+                {" "}(seeded from{" "}
+                <span className="font-mono">
+                  docs/wisor/Charge codes_CW(1)_UPDATED.xlsx
+                </span>
+                ). Future Magaya / Descartes seeds will land alongside with their
+                own origin tag - operator can filter to see "Cargowise codes
+                only" or "all sources" via the dropdown above.
               </div>
             </CardContent>
           </Card>
 
           {/* KPI strip */}
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-5 gap-3">
             <Card>
               <CardContent className="py-3 px-4">
                 <div className="text-[11px] uppercase tracking-wide text-zinc-500">
@@ -208,6 +256,26 @@ export default function ChargeCodesPage() {
                   {counts.disbursement}
                 </div>
                 <div className="text-[10px] text-zinc-500">pass-through cost</div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="py-3 px-4">
+                <div className="text-[11px] uppercase tracking-wide text-zinc-500">
+                  Sourced from
+                </div>
+                <div className="space-y-0.5 mt-1">
+                  {counts.byOrigin.map(([origin, n]) => (
+                    <div
+                      key={origin}
+                      className="flex items-center justify-between gap-2 text-xs"
+                    >
+                      <Badge className={`${PILL_SM} ${TMS_ORIGIN_TONE[origin]}`}>
+                        {TMS_ORIGIN_LABEL[origin]}
+                      </Badge>
+                      <span className="font-mono text-zinc-700">{n}</span>
+                    </div>
+                  ))}
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -261,6 +329,17 @@ export default function ChargeCodesPage() {
               <option value="road">Road</option>
               <option value="rail">Rail</option>
             </select>
+            <select
+              value={originFilter}
+              onChange={(e) => setOriginFilter(e.target.value as "all" | TmsOrigin)}
+              className="h-9 px-2 rounded border border-zinc-300 bg-white text-sm"
+            >
+              <option value="all">All TMS sources</option>
+              <option value="cargowise">Cargowise</option>
+              <option value="magaya">Magaya</option>
+              <option value="descartes">Descartes</option>
+              <option value="native">Braiin native</option>
+            </select>
           </div>
 
           {/* Codes table */}
@@ -282,7 +361,8 @@ export default function ChargeCodesPage() {
                     <TableHead className="w-[80px]">Modes</TableHead>
                     <TableHead className="w-[110px]">Directions</TableHead>
                     <TableHead className="w-[60px] text-right">Mkt %</TableHead>
-                    <TableHead className="w-[140px]">CW mapping</TableHead>
+                    <TableHead className="w-[110px]">Source TMS</TableHead>
+                    <TableHead className="w-[140px]">TMS code</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -325,10 +405,12 @@ export default function ChargeCodesPage() {
                         {c.defaultMarginPct}
                       </TableCell>
                       <TableCell>
+                        <Badge className={`${PILL_SM} ${TMS_ORIGIN_TONE[c.tmsOrigin]}`}>
+                          {TMS_ORIGIN_LABEL[c.tmsOrigin]}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
                         <div className="inline-flex items-center gap-1.5 text-xs">
-                          <Badge className={`${PILL_SM} bg-violet-50 text-violet-700 font-mono border border-violet-200`}>
-                            CW
-                          </Badge>
                           <span className="font-mono text-zinc-700">{c.cwCode}</span>
                           <span className="text-[10px] text-zinc-400">
                             ({c.cwDepartments.length === 1 && c.cwDepartments[0] === "ALL"
