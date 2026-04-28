@@ -245,7 +245,15 @@ CREATE TABLE IF NOT EXISTS quotes.charge_lines (
     visible_to_customer        BOOLEAN NOT NULL DEFAULT TRUE,
     consolidated_into_group    TEXT,                        -- NULL = standalone, otherwise group label
 
-    -- Operator notes (optional)
+    -- Indicative charges ride the quote document as a caveat - shown
+    -- to the customer for awareness ("demurrage at $200/day after the
+    -- 7-day free time") but do NOT contribute to per-currency totals
+    -- or the all-in figure. The accompanying caveat_note is the
+    -- customer-facing explanation that prints alongside the line.
+    is_indicative              BOOLEAN NOT NULL DEFAULT FALSE,
+    caveat_note                TEXT,
+
+    -- Operator notes (optional, internal only)
     notes               TEXT,
 
     -- Display ordering within the category for the customer view
@@ -276,6 +284,11 @@ CREATE INDEX IF NOT EXISTS idx_quotes_charge_lines_spot
 CREATE INDEX IF NOT EXISTS idx_quotes_charge_lines_carrier
     ON quotes.charge_lines (org_id, carrier_id)
     WHERE carrier_id IS NOT NULL;
+
+-- "Indicative caveats per draft" - customer-facing footnote query
+CREATE INDEX IF NOT EXISTS idx_quotes_charge_lines_indicative
+    ON quotes.charge_lines (draft_id, category)
+    WHERE is_indicative = TRUE;
 
 
 -- ============================================================

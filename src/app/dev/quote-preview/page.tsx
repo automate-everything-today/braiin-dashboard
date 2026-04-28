@@ -30,6 +30,7 @@ import {
   Container,
   Eye,
   EyeOff,
+  Info,
   Mail,
   Merge,
   Package,
@@ -315,6 +316,11 @@ interface ChargeLine {
   // Optional grouping label that consolidates this line under a
   // single rolled-up entry on the customer view.
   defaultConsolidateAs: string | null;
+  // Indicative charges ride the quote as a caveat - they do not add
+  // to the total, but the customer sees them with the caveat note so
+  // they understand the conditional cost.
+  defaultIsIndicative?: boolean;
+  defaultCaveatNote?: string;
 }
 
 // ----- FX rates (faked for the mock - production reads geo.fx_rates) -----
@@ -475,6 +481,51 @@ const HAPAG_LINES: ChargeLine[] = [
 
   // Customs
   { id: "CST-CLR", category: "customs", code: "CLR", description: "UK export customs clearance", costAmount: 15, currency: "GBP", defaultMarginType: "flat", defaultMarginValue: 10, defaultVisible: true, defaultConsolidateAs: null },
+
+  // Indicative charges - caveats. Visible on the quote but do NOT
+  // contribute to the total. Each carries a customer-facing note.
+  {
+    id: "IND-DEM",
+    category: "destination",
+    code: "DEM",
+    description: "Destination demurrage",
+    costAmount: 200,
+    currency: "USD",
+    defaultMarginType: "flat",
+    defaultMarginValue: 0,
+    defaultVisible: true,
+    defaultConsolidateAs: null,
+    defaultIsIndicative: true,
+    defaultCaveatNote: "Charged at USD 200 per container per day after 7 free days at Shanghai port",
+  },
+  {
+    id: "IND-DET",
+    category: "delivery",
+    code: "DET",
+    description: "Container detention",
+    costAmount: 80,
+    currency: "USD",
+    defaultMarginType: "flat",
+    defaultMarginValue: 0,
+    defaultVisible: true,
+    defaultConsolidateAs: null,
+    defaultIsIndicative: true,
+    defaultCaveatNote: "Charged at USD 80 per container per day after 4 free days at consignee premises",
+  },
+  {
+    id: "IND-DUTY",
+    category: "customs",
+    code: "DUTY",
+    description: "Import customs duty (China)",
+    costAmount: 0,
+    currency: "GBP",
+    defaultMarginType: "flat",
+    defaultMarginValue: 0,
+    defaultVisible: true,
+    defaultConsolidateAs: null,
+    defaultIsIndicative: true,
+    defaultCaveatNote: "Estimated 5-12% of CIF value, payable directly to Chinese customs at clearance. HS code dependent",
+  },
 ];
 
 // ----- Charge state machine for the panel -----
@@ -494,6 +545,9 @@ interface LineState {
   // Customer-facing presentation
   visible: boolean;
   consolidateAs: string | null;
+  // Indicative ("FYI" / caveat) lines do not contribute to totals.
+  isIndicative: boolean;
+  caveatNote: string;
 }
 
 function fmtCurrency(amount: number, currency: Currency, opts?: { sym?: boolean }) {
@@ -521,12 +575,15 @@ function sellAmount(line: ChargeLine, s: LineState): number {
 
 // Consolidate lines that share the same `consolidateAs` group label
 // into a single row. Lines without a group label keep their own
-// description and stand alone.
+// description and stand alone. Rolled descriptions are captured so the
+// customer view can show an "includes X, Y, Z" caption beneath the
+// consolidated row.
 interface ConsolidatedRow {
   key: string;
   label: string;
   sellNative: number;
   lineCount: number;
+  rolledDescriptions: string[];
 }
 function consolidateLines(
   lines: Array<{ line: ChargeLine; sellNative: number; sellOutput: number }>,
@@ -542,12 +599,14 @@ function consolidateLines(
       if (existing) {
         existing.sellNative += sellNative;
         existing.lineCount += 1;
+        existing.rolledDescriptions.push(line.description);
       } else {
         const row: ConsolidatedRow = {
           key: `grp-${s.consolidateAs}`,
           label: s.consolidateAs,
           sellNative,
           lineCount: 1,
+          rolledDescriptions: [line.description],
         };
         groups.set(s.consolidateAs, row);
         standalone.push(row);
@@ -558,6 +617,7 @@ function consolidateLines(
         label: line.description,
         sellNative,
         lineCount: 1,
+        rolledDescriptions: [],
       });
     }
   }
@@ -599,11 +659,16 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
           marginCurrency: l.currency, // default to cost currency
           visible: l.defaultVisible,
           consolidateAs: l.defaultConsolidateAs,
+          isIndicative: l.defaultIsIndicative ?? false,
+          caveatNote: l.defaultCaveatNote ?? "",
         } as LineState,
       }),
       {},
     ),
   );
+
+  // Show / hide the indicative caveats section in the customer view.
+  const [showIndicativeCaveats, setShowIndicativeCaveats] = useState(true);
 
   function update(id: string, patch: Partial<LineState>) {
     setState((s) => ({ ...s, [id]: { ...s[id], ...patch } }));
@@ -641,12 +706,15 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
     }
   }
 
-  // Operator-facing totals (in output currency)
+  // Operator-facing totals (in output currency).
+  // Indicative lines are EXCLUDED - they ride the quote as caveats
+  // but never contribute to cost / margin / sell.
   const totals = useMemo(() => {
     let cost = 0;
     let sell = 0;
     for (const l of HAPAG_LINES) {
       const s = state[l.id];
+      if (s.isIndicative) continue;
       cost += convert(s.costAmount, s.costCurrency, outputCurrency);
       sell += convert(sellAmount(l, s), s.costCurrency, outputCurrency);
     }
@@ -719,10 +787,20 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
     const macroMap = new Map<MacroGroup, MacroBucket>();
     const totalsByCurrency = new Map<Currency, CurrencyTotal>();
 
+    const indicativeLines: Array<{ line: ChargeLine; sellNative: number }> = [];
+
     for (const l of HAPAG_LINES) {
       const s = state[l.id];
       if (!s.visible) continue;
       const sellNative = sellAmount(l, s);
+
+      // Indicative lines bypass the totals + macro / currency buckets
+      // and live in their own list at the bottom of the quote.
+      if (s.isIndicative) {
+        indicativeLines.push({ line: l, sellNative });
+        continue;
+      }
+
       const sellOutput = convert(sellNative, s.costCurrency, outputCurrency);
       const macro = CATEGORY_TO_MACRO[l.category];
 
@@ -771,6 +849,7 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
     return {
       macros,
       currencyTotals: Array.from(totalsByCurrency.values()),
+      indicativeLines,
     };
   }, [state, outputCurrency]);
 
@@ -958,11 +1037,13 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
               );
               if (macroLines.length === 0) return null;
 
-              // Per-currency subtotals (visible lines only) for this macro
+              // Per-currency subtotals (visible non-indicative lines only)
+              // for this macro. Indicative caveats live in their own
+              // section at the bottom of the customer quote.
               const perCurrency = new Map<Currency, number>();
               for (const l of macroLines) {
                 const s = state[l.id];
-                if (!s.visible) continue;
+                if (!s.visible || s.isIndicative) continue;
                 const sellNative = sellAmount(l, s);
                 perCurrency.set(
                   s.costCurrency,
@@ -1003,6 +1084,7 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
               const tone = CATEGORY_TONE[cat];
               const subTotalInOutput = lines.reduce((n, l) => {
                 const s = state[l.id];
+                if (s.isIndicative) return n;
                 return n + convert(s.costAmount, s.costCurrency, outputCurrency);
               }, 0);
 
@@ -1057,8 +1139,33 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
                                   sell set
                                 </Badge>
                               )}
+                              {s.isIndicative && (
+                                <Badge
+                                  className={`${PILL_SM} bg-sky-100 text-sky-800 uppercase tracking-wide`}
+                                  title="Indicative - shown as caveat, not in totals"
+                                >
+                                  indicative
+                                </Badge>
+                              )}
                             </div>
                             <div className="flex items-center gap-0.5 shrink-0">
+                              <button
+                                onClick={() =>
+                                  update(l.id, { isIndicative: !s.isIndicative })
+                                }
+                                title={
+                                  s.isIndicative
+                                    ? "Make this a real charge that adds to the total"
+                                    : "Make this an indicative caveat (not in totals)"
+                                }
+                                className={`size-6 rounded inline-flex items-center justify-center ${
+                                  s.isIndicative
+                                    ? "text-sky-700 hover:bg-sky-50"
+                                    : "text-zinc-400 hover:bg-zinc-100"
+                                }`}
+                              >
+                                <Info className="size-3.5" />
+                              </button>
                               <button
                                 onClick={() => update(l.id, { visible: !s.visible })}
                                 title={s.visible ? "Hide from customer" : "Show to customer"}
@@ -1226,6 +1333,20 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
                               ↳ rolled up as <b>{s.consolidateAs}</b> on customer view
                             </div>
                           )}
+                          {s.isIndicative && (
+                            <div className="flex items-start gap-1.5 mt-1">
+                              <Info className="size-3 text-sky-600 shrink-0 mt-1" />
+                              <input
+                                type="text"
+                                placeholder="Caveat shown to customer (e.g. 'USD 200 / day after 7 free days at port')"
+                                value={s.caveatNote}
+                                onChange={(e) =>
+                                  update(l.id, { caveatNote: e.target.value })
+                                }
+                                className="flex-1 h-7 px-2 rounded border border-sky-200 bg-sky-50/30 text-[11px] focus:outline-none focus:ring-1 focus:ring-sky-300"
+                              />
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -1269,6 +1390,18 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
                 />
                 Show charges-by-currency summary at the end
               </label>
+              <label className="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showIndicativeCaveats}
+                  onChange={(e) => setShowIndicativeCaveats(e.target.checked)}
+                  className="size-3.5 accent-sky-600"
+                />
+                Show indicative charges section (caveats, not in total) ·{" "}
+                <span className="text-[10px] text-zinc-400">
+                  {grouped.indicativeLines.length} on this quote
+                </span>
+              </label>
               <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-not-allowed">
                 <input type="checkbox" checked disabled className="size-3.5" />
                 Show all-in total in {outputCurrency}{" "}
@@ -1305,21 +1438,25 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
                         return (
                           <div key={cb.currency} className="space-y-0.5 pl-2">
                             {rolledUp.map((row) => (
-                              <div
-                                key={row.key}
-                                className="flex items-start justify-between gap-2"
-                              >
-                                <span className="text-zinc-700">
-                                  {row.label}
-                                  {row.lineCount > 1 && (
-                                    <span className="text-[10px] text-zinc-400 ml-1">
-                                      ({row.lineCount} charges)
-                                    </span>
-                                  )}
-                                </span>
-                                <span className="font-mono text-zinc-700">
-                                  {fmtCurrency(row.sellNative, cb.currency)}
-                                </span>
+                              <div key={row.key}>
+                                <div className="flex items-start justify-between gap-2">
+                                  <span className="text-zinc-700">
+                                    {row.label}
+                                    {row.lineCount > 1 && (
+                                      <span className="text-[10px] text-zinc-400 ml-1">
+                                        ({row.lineCount} charges)
+                                      </span>
+                                    )}
+                                  </span>
+                                  <span className="font-mono text-zinc-700">
+                                    {fmtCurrency(row.sellNative, cb.currency)}
+                                  </span>
+                                </div>
+                                {row.lineCount > 1 && (
+                                  <div className="text-[10px] text-zinc-500 italic pl-2 leading-snug">
+                                    includes {row.rolledDescriptions.join(", ")}
+                                  </div>
+                                )}
                               </div>
                             ))}
                             {showCurrencySubtotals && rolledUp.length > 1 && (
@@ -1360,27 +1497,61 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
                       <div className="space-y-1">
                         {Array.from(byCurrency.entries()).flatMap(([cur, lines]) =>
                           consolidateLines(lines, state).map((row) => (
-                            <div
-                              key={`${cur}-${row.key}`}
-                              className="flex items-start justify-between gap-2"
-                            >
-                              <span className="text-zinc-700">
-                                {row.label}
-                                {row.lineCount > 1 && (
-                                  <span className="text-[10px] text-zinc-400 ml-1">
-                                    ({row.lineCount} charges)
-                                  </span>
-                                )}
-                              </span>
-                              <span className="font-mono text-zinc-700">
-                                {fmtCurrency(row.sellNative, cur)}
-                              </span>
+                            <div key={`${cur}-${row.key}`}>
+                              <div className="flex items-start justify-between gap-2">
+                                <span className="text-zinc-700">
+                                  {row.label}
+                                  {row.lineCount > 1 && (
+                                    <span className="text-[10px] text-zinc-400 ml-1">
+                                      ({row.lineCount} charges)
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="font-mono text-zinc-700">
+                                  {fmtCurrency(row.sellNative, cur)}
+                                </span>
+                              </div>
+                              {row.lineCount > 1 && (
+                                <div className="text-[10px] text-zinc-500 italic pl-2 leading-snug">
+                                  includes {row.rolledDescriptions.join(", ")}
+                                </div>
+                              )}
                             </div>
                           )),
                         )}
                       </div>
                     );
                   })()
+                )}
+
+                {/* Indicative charges - caveats, NOT in totals */}
+                {showIndicativeCaveats && grouped.indicativeLines.length > 0 && (
+                  <div className="pt-2 border-t space-y-1">
+                    <div className="text-[10px] uppercase tracking-wide text-sky-700 mb-1 inline-flex items-center gap-1">
+                      <Info className="size-3" />
+                      Indicative charges (not included in total)
+                    </div>
+                    {grouped.indicativeLines.map(({ line, sellNative }) => {
+                      const s = state[line.id];
+                      return (
+                        <div key={line.id} className="space-y-0.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-zinc-700">{line.description}</span>
+                            <span className="font-mono text-zinc-500">
+                              {sellNative > 0
+                                ? fmtCurrency(sellNative, s.costCurrency)
+                                : "see note"}
+                            </span>
+                          </div>
+                          {s.caveatNote && (
+                            <div className="text-[10px] text-zinc-500 italic pl-2 leading-snug">
+                              {s.caveatNote}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
 
                 {/* Charges by currency summary */}
