@@ -498,7 +498,7 @@ interface LineState {
 
 function fmtCurrency(amount: number, currency: Currency, opts?: { sym?: boolean }) {
   const sym = opts?.sym === false ? "" : CURRENCY_SYMBOL[currency];
-  return `${sym}${amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  return `${sym}${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 // Compute sell from a line's state, in the cost currency.
@@ -517,6 +517,51 @@ function sellAmount(line: ChargeLine, s: LineState): number {
   const marginInMarginCcy = s.marginValue * unitCount;
   const marginInCostCcy = convert(marginInMarginCcy, s.marginCurrency, s.costCurrency);
   return s.costAmount + marginInCostCcy;
+}
+
+// Consolidate lines that share the same `consolidateAs` group label
+// into a single row. Lines without a group label keep their own
+// description and stand alone.
+interface ConsolidatedRow {
+  key: string;
+  label: string;
+  sellNative: number;
+  lineCount: number;
+}
+function consolidateLines(
+  lines: Array<{ line: ChargeLine; sellNative: number; sellOutput: number }>,
+  state: Record<string, LineState>,
+): ConsolidatedRow[] {
+  const groups = new Map<string, ConsolidatedRow>();
+  const standalone: ConsolidatedRow[] = [];
+  let i = 0;
+  for (const { line, sellNative } of lines) {
+    const s = state[line.id];
+    if (s.consolidateAs) {
+      const existing = groups.get(s.consolidateAs);
+      if (existing) {
+        existing.sellNative += sellNative;
+        existing.lineCount += 1;
+      } else {
+        const row: ConsolidatedRow = {
+          key: `grp-${s.consolidateAs}`,
+          label: s.consolidateAs,
+          sellNative,
+          lineCount: 1,
+        };
+        groups.set(s.consolidateAs, row);
+        standalone.push(row);
+      }
+    } else {
+      standalone.push({
+        key: `${line.id}-${i++}`,
+        label: line.description,
+        sellNative,
+        lineCount: 1,
+      });
+    }
+  }
+  return standalone;
 }
 
 interface BreakdownPanelProps {
@@ -1242,7 +1287,11 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
             </div>
             <div className="px-5 py-4">
               <div className="bg-white border rounded p-4 space-y-3 text-xs">
-                {/* Macro-group sections */}
+                {/* Macro-group sections.
+                    Within each currency bucket we consolidate lines
+                    that share the same group label into a single row -
+                    that's the whole point of consolidation. Lines
+                    without a group label show their own description. */}
                 {showMacroGroups ? (
                   grouped.macros.map((mb) => (
                     <div key={mb.group} className="space-y-1">
@@ -1251,35 +1300,39 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
                       >
                         {MACRO_GROUP_LABEL[mb.group]}
                       </div>
-                      {mb.currencies.map((cb) => (
-                        <div key={cb.currency} className="space-y-0.5 pl-2">
-                          {cb.lines.map(({ line, sellNative }, i) => {
-                            const s = state[line.id];
-                            // Use consolidated label when set; otherwise the
-                            // line's own description.
-                            const label = s.consolidateAs ?? line.description;
-                            return (
+                      {mb.currencies.map((cb) => {
+                        const rolledUp = consolidateLines(cb.lines, state);
+                        return (
+                          <div key={cb.currency} className="space-y-0.5 pl-2">
+                            {rolledUp.map((row) => (
                               <div
-                                key={`${line.id}-${i}`}
+                                key={row.key}
                                 className="flex items-start justify-between gap-2"
                               >
-                                <span className="text-zinc-700">{label}</span>
+                                <span className="text-zinc-700">
+                                  {row.label}
+                                  {row.lineCount > 1 && (
+                                    <span className="text-[10px] text-zinc-400 ml-1">
+                                      ({row.lineCount} charges)
+                                    </span>
+                                  )}
+                                </span>
                                 <span className="font-mono text-zinc-700">
-                                  {fmtCurrency(sellNative, cb.currency)}
+                                  {fmtCurrency(row.sellNative, cb.currency)}
                                 </span>
                               </div>
-                            );
-                          })}
-                          {showCurrencySubtotals && cb.lines.length > 1 && (
-                            <div className="flex items-start justify-between gap-2 pt-0.5 text-[11px] text-zinc-500 italic">
-                              <span>{cb.currency} subtotal</span>
-                              <span className="font-mono">
-                                {fmtCurrency(cb.sellNative, cb.currency)}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                            ))}
+                            {showCurrencySubtotals && rolledUp.length > 1 && (
+                              <div className="flex items-start justify-between gap-2 pt-0.5 text-[11px] text-zinc-500 italic">
+                                <span>{cb.currency} subtotal</span>
+                                <span className="font-mono">
+                                  {fmtCurrency(cb.sellNative, cb.currency)}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                       <div className="flex items-start justify-between gap-2 pt-1 border-t border-dashed border-zinc-200 font-medium">
                         <span>{MACRO_GROUP_LABEL[mb.group]} total</span>
                         <span className="font-mono">
@@ -1289,28 +1342,45 @@ function BreakdownPanel({ open, onClose }: BreakdownPanelProps) {
                     </div>
                   ))
                 ) : (
-                  // Flat - no macro headers
-                  <div className="space-y-1">
-                    {grouped.macros
-                      .flatMap((m) => m.currencies)
-                      .flatMap((cb) =>
-                        cb.lines.map(({ line, sellNative }) => {
-                          const s = state[line.id];
-                          const label = s.consolidateAs ?? line.description;
-                          return (
+                  // Flat - no macro headers. Consolidate across the whole
+                  // visible set within each currency.
+                  (() => {
+                    const byCurrency = new Map<
+                      Currency,
+                      Array<{ line: ChargeLine; sellNative: number; sellOutput: number }>
+                    >();
+                    for (const m of grouped.macros) {
+                      for (const cb of m.currencies) {
+                        const arr = byCurrency.get(cb.currency) ?? [];
+                        arr.push(...cb.lines);
+                        byCurrency.set(cb.currency, arr);
+                      }
+                    }
+                    return (
+                      <div className="space-y-1">
+                        {Array.from(byCurrency.entries()).flatMap(([cur, lines]) =>
+                          consolidateLines(lines, state).map((row) => (
                             <div
-                              key={line.id}
+                              key={`${cur}-${row.key}`}
                               className="flex items-start justify-between gap-2"
                             >
-                              <span className="text-zinc-700">{label}</span>
+                              <span className="text-zinc-700">
+                                {row.label}
+                                {row.lineCount > 1 && (
+                                  <span className="text-[10px] text-zinc-400 ml-1">
+                                    ({row.lineCount} charges)
+                                  </span>
+                                )}
+                              </span>
                               <span className="font-mono text-zinc-700">
-                                {fmtCurrency(sellNative, cb.currency)}
+                                {fmtCurrency(row.sellNative, cur)}
                               </span>
                             </div>
-                          );
-                        }),
-                      )}
-                  </div>
+                          )),
+                        )}
+                      </div>
+                    );
+                  })()
                 )}
 
                 {/* Charges by currency summary */}
