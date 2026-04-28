@@ -12,7 +12,7 @@
  * was built from the Cargowise dictionary (107 codes) in the wisor folder.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,7 +26,10 @@ import {
 } from "@/components/ui/table";
 import { PageGuard } from "@/components/page-guard";
 import {
+  AlertTriangle,
   ArrowRight,
+  Check,
+  Download,
   ListChecks,
   Pencil,
   Plane,
@@ -37,9 +40,11 @@ import {
   Tag,
   Trash2,
   Truck,
+  Upload,
   X,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import { downloadCsv, parseCsv, serializeCsv, type CsvRow } from "@/lib/csv";
 import {
   CHARGE_CODES,
   type ChargeCode,
@@ -436,6 +441,333 @@ function ChargeCodeEditPanel({
 // Page
 // ============================================================
 
+// ============================================================
+// CSV import / export
+// ============================================================
+
+const CSV_HEADERS = [
+  "braiin_code",
+  "description",
+  "billing_type",
+  "macro_group",
+  "default_margin_pct",
+  "applicable_modes",
+  "applicable_directions",
+  "tms_origin",
+  "tms_code",
+  "tms_metadata",
+] as const;
+
+const VALID_BILLING = ["margin", "revenue", "disbursement"];
+const VALID_MACRO = ["origin_exw", "freight", "destination_delivery", "insurance_other"];
+const VALID_ORIGIN = ["cargowise", "magaya", "descartes", "native"];
+
+interface UploadIssue {
+  rowNumber: number;
+  level: "error" | "warning";
+  message: string;
+}
+
+interface ParsedUpload {
+  rows: ChargeCode[];
+  issues: UploadIssue[];
+  totalParsed: number;
+  newRows: number;
+  updatedRows: number;
+}
+
+function chargeCodeToCsv(c: ChargeCode): CsvRow {
+  return {
+    braiin_code: c.braiinCode,
+    description: c.description,
+    billing_type: c.billingType,
+    macro_group: c.macroGroup,
+    default_margin_pct: String(c.defaultMarginPct),
+    applicable_modes: c.applicableModes.join("|"),
+    applicable_directions: c.applicableDirections.join("|"),
+    tms_origin: c.tmsOrigin,
+    tms_code: c.cwCode,
+    tms_metadata: c.cwDepartments.join("|"),
+  };
+}
+
+function csvToChargeCode(
+  row: CsvRow,
+  rowNumber: number,
+  existing: ChargeCode[],
+): { code: ChargeCode | null; issues: UploadIssue[] } {
+  const issues: UploadIssue[] = [];
+  const code = (row.braiin_code ?? "").trim();
+  if (!code) {
+    issues.push({
+      rowNumber,
+      level: "error",
+      message: "braiin_code is required",
+    });
+    return { code: null, issues };
+  }
+  const description = (row.description ?? "").trim();
+  if (!description) {
+    issues.push({
+      rowNumber,
+      level: "error",
+      message: `${code}: description is required`,
+    });
+    return { code: null, issues };
+  }
+  const billing = (row.billing_type ?? "margin").trim() as ChargeCode["billingType"];
+  if (!VALID_BILLING.includes(billing)) {
+    issues.push({
+      rowNumber,
+      level: "error",
+      message: `${code}: billing_type must be one of ${VALID_BILLING.join(", ")}`,
+    });
+    return { code: null, issues };
+  }
+  const macro = (row.macro_group ?? "insurance_other").trim() as ChargeCode["macroGroup"];
+  if (!VALID_MACRO.includes(macro)) {
+    issues.push({
+      rowNumber,
+      level: "error",
+      message: `${code}: macro_group must be one of ${VALID_MACRO.join(", ")}`,
+    });
+    return { code: null, issues };
+  }
+  const pctRaw = (row.default_margin_pct ?? "0").trim();
+  const pct = Number(pctRaw);
+  if (!Number.isFinite(pct)) {
+    issues.push({
+      rowNumber,
+      level: "warning",
+      message: `${code}: default_margin_pct "${pctRaw}" is not a number, defaulting to 0`,
+    });
+  }
+  const modes = (row.applicable_modes ?? "")
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const dirs = (row.applicable_directions ?? "")
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const origin = (row.tms_origin ?? "native").trim() as TmsOrigin;
+  if (!VALID_ORIGIN.includes(origin)) {
+    issues.push({
+      rowNumber,
+      level: "error",
+      message: `${code}: tms_origin must be one of ${VALID_ORIGIN.join(", ")}`,
+    });
+    return { code: null, issues };
+  }
+  const tmsCode = (row.tms_code ?? "").trim();
+  const meta = (row.tms_metadata ?? "")
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (existing.some((e) => e.braiinCode === code)) {
+    // Update existing - flag as such
+    issues.push({
+      rowNumber,
+      level: "warning",
+      message: `${code}: existing entry will be UPDATED`,
+    });
+  }
+
+  return {
+    code: {
+      braiinCode: code,
+      description,
+      billingType: billing,
+      macroGroup: macro,
+      defaultMarginPct: Number.isFinite(pct) ? pct : 0,
+      applicableModes: modes,
+      applicableDirections: dirs,
+      tmsOrigin: origin,
+      cwCode: tmsCode,
+      cwDepartments: meta.length > 0 ? meta : ["ALL"],
+    },
+    issues,
+  };
+}
+
+function makeTemplate(): string {
+  const examples: ChargeCode[] = [
+    {
+      braiinCode: "example_origin_thc",
+      description: "Origin Terminal Handling - example",
+      billingType: "margin",
+      macroGroup: "origin_exw",
+      defaultMarginPct: 100,
+      applicableModes: ["sea_fcl", "sea_lcl"],
+      applicableDirections: ["export"],
+      tmsOrigin: "native",
+      cwCode: "OTHC",
+      cwDepartments: ["FES", "FIS"],
+    },
+    {
+      braiinCode: "example_admin_fee",
+      description: "Booking / admin fee - flat with no markup",
+      billingType: "revenue",
+      macroGroup: "insurance_other",
+      defaultMarginPct: 0,
+      applicableModes: ["sea_fcl", "sea_lcl", "air", "road", "rail"],
+      applicableDirections: ["import", "export", "crosstrade"],
+      tmsOrigin: "native",
+      cwCode: "",
+      cwDepartments: ["ALL"],
+    },
+    {
+      braiinCode: "example_demurrage",
+      description: "Demurrage - pass-through to customer at cost",
+      billingType: "disbursement",
+      macroGroup: "destination_delivery",
+      defaultMarginPct: 0,
+      applicableModes: ["sea_fcl", "sea_lcl"],
+      applicableDirections: ["import"],
+      tmsOrigin: "native",
+      cwCode: "CDEM",
+      cwDepartments: ["FIS"],
+    },
+  ];
+  const rows = examples.map(chargeCodeToCsv);
+  return serializeCsv([...CSV_HEADERS], rows);
+}
+
+// ============================================================
+// Upload preview slide-in
+// ============================================================
+
+interface UploadPreviewProps {
+  parsed: ParsedUpload | null;
+  onClose: () => void;
+  onConfirm: (rows: ChargeCode[]) => void;
+}
+
+function UploadPreviewPanel({ parsed, onClose, onConfirm }: UploadPreviewProps) {
+  if (!parsed) return null;
+  const errorCount = parsed.issues.filter((i) => i.level === "error").length;
+  const warningCount = parsed.issues.filter((i) => i.level === "warning").length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div
+        className="flex-1 bg-zinc-900/30 backdrop-blur-[1px]"
+        onClick={onClose}
+      />
+      <div className="w-[680px] bg-white border-l border-zinc-200 flex flex-col shadow-2xl">
+        <div className="border-b px-5 py-4 flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
+              <Upload className="size-3.5" />
+              Upload preview
+            </div>
+            <div className="font-medium">
+              {parsed.totalParsed} rows parsed ·{" "}
+              <span className="text-emerald-700">{parsed.newRows} new</span>{" "}
+              + <span className="text-amber-700">{parsed.updatedRows} update</span>
+            </div>
+            <div className="text-[11px] text-zinc-500 mt-1 inline-flex items-center gap-3">
+              {errorCount > 0 && (
+                <span className="text-rose-700">
+                  <AlertTriangle className="size-3 inline" /> {errorCount} error
+                  {errorCount === 1 ? "" : "s"}
+                </span>
+              )}
+              {warningCount > 0 && (
+                <span className="text-amber-700">
+                  {warningCount} warning{warningCount === 1 ? "" : "s"}
+                </span>
+              )}
+              {errorCount === 0 && warningCount === 0 && (
+                <span className="text-emerald-700">
+                  <Check className="size-3 inline" /> All rows valid
+                </span>
+              )}
+            </div>
+          </div>
+          <Button size="sm" variant="ghost" onClick={onClose} className="size-8 p-0">
+            <X className="size-4" />
+          </Button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+          {parsed.issues.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+                Issues
+              </div>
+              {parsed.issues.map((iss, i) => (
+                <div
+                  key={i}
+                  className={`flex items-start gap-2 text-xs px-3 py-1.5 rounded border ${
+                    iss.level === "error"
+                      ? "bg-rose-50/60 border-rose-200 text-rose-800"
+                      : "bg-amber-50/60 border-amber-200 text-amber-800"
+                  }`}
+                >
+                  <span className="font-mono text-[10px] shrink-0">
+                    row {iss.rowNumber}
+                  </span>
+                  <span>{iss.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {parsed.rows.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+                Rows ready to import ({parsed.rows.length})
+              </div>
+              {parsed.rows.map((c) => (
+                <div
+                  key={c.braiinCode}
+                  className="flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-zinc-200 hover:bg-zinc-50"
+                >
+                  <span className="font-mono text-zinc-700">{c.braiinCode}</span>
+                  <span className="text-zinc-500 truncate flex-1">
+                    {c.description}
+                  </span>
+                  <Badge className={`${PILL_SM} ${BILLING_TONE[c.billingType]}`}>
+                    {BILLING_LABEL[c.billingType]}
+                  </Badge>
+                  <Badge className={`${PILL_SM} ${MACRO_TONE[c.macroGroup]}`}>
+                    {MACRO_LABEL[c.macroGroup]}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="border-t px-5 py-3 flex items-center justify-between bg-zinc-50">
+          <div className="text-[11px] text-zinc-500">
+            Errors block import. Warnings are informational.
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-emerald-600 hover:bg-emerald-700"
+              disabled={errorCount > 0 || parsed.rows.length === 0}
+              onClick={() => {
+                onConfirm(parsed.rows);
+                onClose();
+              }}
+            >
+              <Upload className="size-3.5 mr-1.5" />
+              Import {parsed.rows.length} row{parsed.rows.length === 1 ? "" : "s"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const EMPTY_DRAFT: ChargeCode = {
   braiinCode: "",
   description: "",
@@ -456,6 +788,53 @@ export default function ChargeCodesPage() {
   const [editing, setEditing] = useState<{ draft: ChargeCode; isNew: boolean } | null>(
     null,
   );
+  const [upload, setUpload] = useState<ParsedUpload | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function handleTemplate() {
+    downloadCsv("charge-codes-template.csv", makeTemplate());
+  }
+
+  function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result ?? "");
+      const csvRows = parseCsv(text);
+      const allIssues: UploadIssue[] = [];
+      const parsed: ChargeCode[] = [];
+      let newCount = 0;
+      let updateCount = 0;
+      csvRows.forEach((row, idx) => {
+        const { code, issues } = csvToChargeCode(row, idx + 2, codes);
+        allIssues.push(...issues);
+        if (code) {
+          parsed.push(code);
+          if (codes.some((c) => c.braiinCode === code.braiinCode)) updateCount++;
+          else newCount++;
+        }
+      });
+      setUpload({
+        rows: parsed,
+        issues: allIssues,
+        totalParsed: csvRows.length,
+        newRows: newCount,
+        updatedRows: updateCount,
+      });
+      // Clear the input so re-uploading the same file fires onChange.
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    };
+    reader.readAsText(file);
+  }
+
+  function handleConfirmImport(rows: ChargeCode[]) {
+    setCodes((prev) => {
+      const map = new Map(prev.map((c) => [c.braiinCode, c]));
+      for (const r of rows) map.set(r.braiinCode, r);
+      return Array.from(map.values());
+    });
+  }
 
   const [query, setQuery] = useState("");
   const [billingFilter, setBillingFilter] =
@@ -527,10 +906,25 @@ export default function ChargeCodesPage() {
               </Badge>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm">
-                <ArrowRight className="size-3.5 mr-1.5" />
-                TMS mappings
+              <Button variant="outline" size="sm" onClick={handleTemplate}>
+                <Download className="size-3.5 mr-1.5" />
+                Template
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="size-3.5 mr-1.5" />
+                Upload CSV
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                onChange={handleUpload}
+                className="hidden"
+              />
               <Button
                 size="sm"
                 className="bg-emerald-600 hover:bg-emerald-700"
@@ -853,6 +1247,11 @@ export default function ChargeCodesPage() {
           onClose={() => setEditing(null)}
           onSave={saveCode}
           onDelete={editing && !editing.isNew ? deleteCode : null}
+        />
+        <UploadPreviewPanel
+          parsed={upload}
+          onClose={() => setUpload(null)}
+          onConfirm={handleConfirmImport}
         />
       </div>
     </PageGuard>

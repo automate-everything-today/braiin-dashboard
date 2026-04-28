@@ -14,7 +14,7 @@
  * computed by the schema (most non-NULL scope fields wins).
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,8 +29,12 @@ import {
 } from "@/components/ui/table";
 import { PageGuard } from "@/components/page-guard";
 import {
+  AlertTriangle,
   ArrowLeftRight,
+  ArrowRight,
   Calculator,
+  Check,
+  Download,
   Layers,
   Pencil,
   Percent,
@@ -40,10 +44,13 @@ import {
   Settings2,
   Ship,
   Sparkles,
+  Star,
   Trash2,
   Truck,
+  Upload,
   X,
 } from "lucide-react";
+import { downloadCsv, parseCsv, serializeCsv, type CsvRow } from "@/lib/csv";
 
 const PILL_SM =
   "text-[10px] px-1.5 py-0 leading-[18px] h-[18px] font-normal tracking-normal";
@@ -899,6 +906,753 @@ function rulePriority(r: MarginRule): number {
 // Page
 // ============================================================
 
+// ============================================================
+// CSV import / export
+// ============================================================
+
+const CSV_HEADERS = [
+  "rule_id",
+  "name",
+  "description",
+  "customer_name",
+  "carrier_name",
+  "mode",
+  "direction",
+  "origin_country",
+  "destination_country",
+  "macro_group",
+  "charge_code",
+  "markup_method",
+  "markup_value",
+  "markup_currency",
+  "currency_rates",
+  "min_charge_amount",
+  "min_charge_currency",
+  "is_active",
+] as const;
+
+const VALID_MODES_CSV = ["sea_fcl", "sea_lcl", "air", "road", "rail"];
+const VALID_DIR_CSV = ["import", "export", "crosstrade"];
+const VALID_MACRO_CSV = ["origin_exw", "freight", "destination_delivery", "insurance_other"];
+
+interface UploadIssue {
+  rowNumber: number;
+  level: "error" | "warning";
+  message: string;
+}
+
+interface ParsedUpload {
+  rows: MarginRule[];
+  issues: UploadIssue[];
+  totalParsed: number;
+  newRows: number;
+  updatedRows: number;
+}
+
+function ruleToCsv(r: MarginRule): CsvRow {
+  return {
+    rule_id: r.ruleId,
+    name: r.name,
+    description: r.description ?? "",
+    customer_name: r.customerName ?? "",
+    carrier_name: r.carrierName ?? "",
+    mode: r.mode ?? "",
+    direction: r.direction ?? "",
+    origin_country: r.originCountry ?? "",
+    destination_country: r.destinationCountry ?? "",
+    macro_group: r.macroGroup ?? "",
+    charge_code: r.chargeCode ?? "",
+    markup_method: r.markupMethod,
+    markup_value: String(r.markupValue),
+    markup_currency: r.markupCurrency,
+    currency_rates: r.currencyRates
+      ? Object.entries(r.currencyRates)
+          .map(([c, v]) => `${c}=${v}`)
+          .join("|")
+      : "",
+    min_charge_amount: r.minChargeAmount !== undefined ? String(r.minChargeAmount) : "",
+    min_charge_currency: r.minChargeCurrency ?? "",
+    is_active: r.isActive ? "true" : "false",
+  };
+}
+
+function csvToRule(
+  row: CsvRow,
+  rowNumber: number,
+  existing: MarginRule[],
+): { rule: MarginRule | null; issues: UploadIssue[] } {
+  const issues: UploadIssue[] = [];
+  const name = (row.name ?? "").trim();
+  if (!name) {
+    issues.push({ rowNumber, level: "error", message: "name is required" });
+    return { rule: null, issues };
+  }
+  const ruleId = (row.rule_id ?? "").trim();
+  const method = (row.markup_method ?? "pct") as MarkupMethod;
+  if (!ALL_METHODS.includes(method)) {
+    issues.push({
+      rowNumber,
+      level: "error",
+      message: `${name}: markup_method must be one of ${ALL_METHODS.join(", ")}`,
+    });
+    return { rule: null, issues };
+  }
+  const valRaw = (row.markup_value ?? "0").trim();
+  const val = Number(valRaw);
+  if (!Number.isFinite(val) && method !== "currency_conditional" && method !== "on_cost") {
+    issues.push({
+      rowNumber,
+      level: "warning",
+      message: `${name}: markup_value "${valRaw}" is not numeric, defaulting to 0`,
+    });
+  }
+  const mode = (row.mode ?? "").trim();
+  if (mode && !VALID_MODES_CSV.includes(mode)) {
+    issues.push({
+      rowNumber,
+      level: "error",
+      message: `${name}: mode must be one of ${VALID_MODES_CSV.join(", ")} or empty`,
+    });
+    return { rule: null, issues };
+  }
+  const direction = (row.direction ?? "").trim();
+  if (direction && !VALID_DIR_CSV.includes(direction)) {
+    issues.push({
+      rowNumber,
+      level: "error",
+      message: `${name}: direction must be one of ${VALID_DIR_CSV.join(", ")} or empty`,
+    });
+    return { rule: null, issues };
+  }
+  const macro = (row.macro_group ?? "").trim();
+  if (macro && !VALID_MACRO_CSV.includes(macro)) {
+    issues.push({
+      rowNumber,
+      level: "error",
+      message: `${name}: macro_group must be one of ${VALID_MACRO_CSV.join(", ")} or empty`,
+    });
+    return { rule: null, issues };
+  }
+
+  let currencyRates: Record<string, number> | undefined;
+  const ratesRaw = (row.currency_rates ?? "").trim();
+  if (ratesRaw) {
+    currencyRates = {};
+    for (const seg of ratesRaw.split("|")) {
+      const m = seg.match(/^\s*([A-Z]{3})\s*=\s*([-0-9.]+)\s*$/);
+      if (m) currencyRates[m[1]] = Number(m[2]);
+    }
+  }
+
+  const minChargeRaw = (row.min_charge_amount ?? "").trim();
+  const minCharge = minChargeRaw ? Number(minChargeRaw) : undefined;
+
+  if (ruleId && existing.some((e) => e.ruleId === ruleId)) {
+    issues.push({
+      rowNumber,
+      level: "warning",
+      message: `${ruleId}: existing rule will be UPDATED`,
+    });
+  }
+
+  const rule: MarginRule = {
+    ruleId: ruleId,
+    name,
+    description: (row.description ?? "").trim() || undefined,
+    customerName: (row.customer_name ?? "").trim() || undefined,
+    carrierName: (row.carrier_name ?? "").trim() || undefined,
+    mode: mode ? (mode as Mode) : undefined,
+    direction: direction ? (direction as Direction) : undefined,
+    originCountry: (row.origin_country ?? "").trim() || undefined,
+    destinationCountry: (row.destination_country ?? "").trim() || undefined,
+    macroGroup: macro ? (macro as MacroGroup) : undefined,
+    chargeCode: (row.charge_code ?? "").trim() || undefined,
+    markupMethod: method,
+    markupValue: Number.isFinite(val) ? val : 0,
+    markupCurrency: (row.markup_currency ?? "GBP").trim() || "GBP",
+    currencyRates,
+    minChargeAmount: minCharge !== undefined && Number.isFinite(minCharge) ? minCharge : undefined,
+    minChargeCurrency: (row.min_charge_currency ?? "").trim() || undefined,
+    isActive: (row.is_active ?? "true").trim().toLowerCase() !== "false",
+  };
+  return { rule, issues };
+}
+
+function makeMarginTemplate(): string {
+  const examples: MarginRule[] = [
+    {
+      ruleId: "",
+      name: "Example - FCL Export Collection",
+      description: "Per-container collection markup",
+      mode: "sea_fcl",
+      direction: "export",
+      chargeCode: "collection",
+      markupMethod: "per_container",
+      markupValue: 50,
+      markupCurrency: "GBP",
+      isActive: true,
+    },
+    {
+      ruleId: "",
+      name: "Example - Currency-conditional clearance",
+      description: "+10 GBP / +15 USD / +15 EUR per BL",
+      mode: "sea_fcl",
+      direction: "export",
+      chargeCode: "export_customs_clearance_fee",
+      markupMethod: "currency_conditional",
+      markupValue: 0,
+      markupCurrency: "GBP",
+      currencyRates: { GBP: 10, USD: 15, EUR: 15 },
+      isActive: true,
+    },
+    {
+      ruleId: "",
+      name: "Example - Air screening with min",
+      description: "0.13 GBP/kg, min GBP 35",
+      mode: "air",
+      direction: "export",
+      chargeCode: "primary_screening",
+      markupMethod: "per_chargeable_weight",
+      markupValue: 0.13,
+      markupCurrency: "GBP",
+      minChargeAmount: 35,
+      minChargeCurrency: "GBP",
+      isActive: true,
+    },
+  ];
+  return serializeCsv([...CSV_HEADERS], examples.map(ruleToCsv));
+}
+
+// ============================================================
+// Upload preview slide-in
+// ============================================================
+
+interface UploadPreviewProps {
+  parsed: ParsedUpload | null;
+  onClose: () => void;
+  onConfirm: (rows: MarginRule[]) => void;
+}
+
+function UploadPreviewPanel({ parsed, onClose, onConfirm }: UploadPreviewProps) {
+  if (!parsed) return null;
+  const errorCount = parsed.issues.filter((i) => i.level === "error").length;
+  const warningCount = parsed.issues.filter((i) => i.level === "warning").length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div
+        className="flex-1 bg-zinc-900/30 backdrop-blur-[1px]"
+        onClick={onClose}
+      />
+      <div className="w-[680px] bg-white border-l border-zinc-200 flex flex-col shadow-2xl">
+        <div className="border-b px-5 py-4 flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
+              <Upload className="size-3.5" />
+              Upload preview
+            </div>
+            <div className="font-medium">
+              {parsed.totalParsed} rows parsed ·{" "}
+              <span className="text-emerald-700">{parsed.newRows} new</span>{" "}
+              + <span className="text-amber-700">{parsed.updatedRows} update</span>
+            </div>
+            <div className="text-[11px] text-zinc-500 mt-1 inline-flex items-center gap-3">
+              {errorCount > 0 && (
+                <span className="text-rose-700">
+                  <AlertTriangle className="size-3 inline" /> {errorCount} error
+                  {errorCount === 1 ? "" : "s"}
+                </span>
+              )}
+              {warningCount > 0 && (
+                <span className="text-amber-700">
+                  {warningCount} warning{warningCount === 1 ? "" : "s"}
+                </span>
+              )}
+              {errorCount === 0 && warningCount === 0 && (
+                <span className="text-emerald-700">
+                  <Check className="size-3 inline" /> All rows valid
+                </span>
+              )}
+            </div>
+          </div>
+          <Button size="sm" variant="ghost" onClick={onClose} className="size-8 p-0">
+            <X className="size-4" />
+          </Button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+          {parsed.issues.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+                Issues
+              </div>
+              {parsed.issues.map((iss, i) => (
+                <div
+                  key={i}
+                  className={`flex items-start gap-2 text-xs px-3 py-1.5 rounded border ${
+                    iss.level === "error"
+                      ? "bg-rose-50/60 border-rose-200 text-rose-800"
+                      : "bg-amber-50/60 border-amber-200 text-amber-800"
+                  }`}
+                >
+                  <span className="font-mono text-[10px] shrink-0">
+                    row {iss.rowNumber}
+                  </span>
+                  <span>{iss.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {parsed.rows.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+                Rules ready to import ({parsed.rows.length})
+              </div>
+              {parsed.rows.map((r, i) => (
+                <div
+                  key={`${r.ruleId}-${i}`}
+                  className="flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-zinc-200 hover:bg-zinc-50"
+                >
+                  <span className="text-zinc-700 truncate flex-1">{r.name}</span>
+                  <Badge className={`${PILL_SM} bg-emerald-100 text-emerald-800 font-mono`}>
+                    {fmtMarkup(r)}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="border-t px-5 py-3 flex items-center justify-between bg-zinc-50">
+          <div className="text-[11px] text-zinc-500">
+            Errors block import. Warnings are informational.
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-emerald-600 hover:bg-emerald-700"
+              disabled={errorCount > 0 || parsed.rows.length === 0}
+              onClick={() => {
+                onConfirm(parsed.rows);
+                onClose();
+              }}
+            >
+              <Upload className="size-3.5 mr-1.5" />
+              Import {parsed.rows.length} rule{parsed.rows.length === 1 ? "" : "s"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Test calculator slide-in
+// ============================================================
+
+interface TestInputs {
+  customerName: string;
+  carrierName: string;
+  mode: Mode | "";
+  direction: Direction | "";
+  originCountry: string;
+  destinationCountry: string;
+  macroGroup: MacroGroup | "";
+  chargeCode: string;
+  costAmount: number;
+  costCurrency: string;
+}
+
+const DEFAULT_TEST: TestInputs = {
+  customerName: "",
+  carrierName: "",
+  mode: "sea_fcl",
+  direction: "export",
+  originCountry: "GB",
+  destinationCountry: "CN",
+  macroGroup: "freight",
+  chargeCode: "ocean_freight",
+  costAmount: 1500,
+  costCurrency: "USD",
+};
+
+interface MatchResult {
+  rule: MarginRule;
+  matches: boolean;
+  matchedFields: string[];
+  rejectedField?: string;
+  computedSell?: number;
+}
+
+function evaluateRule(rule: MarginRule, t: TestInputs): MatchResult {
+  const checks: Array<[string, string | undefined, string | undefined]> = [
+    ["customer", rule.customerName, t.customerName || undefined],
+    ["carrier", rule.carrierName, t.carrierName || undefined],
+    ["mode", rule.mode, t.mode || undefined],
+    ["direction", rule.direction, t.direction || undefined],
+    ["origin_country", rule.originCountry, t.originCountry || undefined],
+    ["destination_country", rule.destinationCountry, t.destinationCountry || undefined],
+    ["macro_group", rule.macroGroup, t.macroGroup || undefined],
+    ["charge_code", rule.chargeCode, t.chargeCode || undefined],
+  ];
+
+  const matchedFields: string[] = [];
+  for (const [field, ruleVal, testVal] of checks) {
+    if (ruleVal === undefined) continue; // any
+    if (ruleVal !== testVal) {
+      return {
+        rule,
+        matches: false,
+        matchedFields,
+        rejectedField: field,
+      };
+    }
+    matchedFields.push(field);
+  }
+
+  // Compute sell
+  let sell = t.costAmount;
+  switch (rule.markupMethod) {
+    case "pct":
+      sell = t.costAmount * (1 + rule.markupValue / 100);
+      break;
+    case "flat":
+      sell = t.costAmount + rule.markupValue;
+      break;
+    case "per_container":
+      sell = t.costAmount + rule.markupValue * 2; // assume 2 containers for demo
+      break;
+    case "per_kg":
+    case "per_chargeable_weight":
+      sell = t.costAmount + rule.markupValue * 5000; // demo weight
+      break;
+    case "per_cbm":
+      sell = t.costAmount + rule.markupValue * 20; // demo CBM
+      break;
+    case "per_bill":
+    case "per_shipment":
+      sell = t.costAmount + rule.markupValue;
+      break;
+    case "currency_conditional":
+      const r = rule.currencyRates?.[t.costCurrency] ?? 0;
+      sell = t.costAmount + r;
+      break;
+    case "override":
+      sell = rule.markupValue;
+      break;
+    case "on_cost":
+      sell = t.costAmount;
+      break;
+    default:
+      sell = t.costAmount + rule.markupValue;
+  }
+  if (rule.minChargeAmount && sell < rule.minChargeAmount) {
+    sell = rule.minChargeAmount;
+  }
+
+  return {
+    rule,
+    matches: true,
+    matchedFields,
+    computedSell: sell,
+  };
+}
+
+interface TestCalculatorProps {
+  open: boolean;
+  onClose: () => void;
+  rules: MarginRule[];
+}
+
+function TestCalculatorPanel({ open, onClose, rules }: TestCalculatorProps) {
+  const [t, setT] = useState<TestInputs>(DEFAULT_TEST);
+
+  if (!open) return null;
+
+  const results = rules
+    .filter((r) => r.isActive)
+    .map((r) => evaluateRule(r, t))
+    .sort((a, b) => {
+      // Match-first then by priority desc
+      if (a.matches !== b.matches) return a.matches ? -1 : 1;
+      return rulePriority(b.rule) - rulePriority(a.rule);
+    });
+
+  const winner = results.find((r) => r.matches) ?? null;
+  const otherMatches = results.filter((r) => r.matches && r !== winner);
+  const nearMisses = results.filter((r) => !r.matches).slice(0, 6);
+
+  function update<K extends keyof TestInputs>(k: K, v: TestInputs[K]) {
+    setT({ ...t, [k]: v });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div
+        className="flex-1 bg-zinc-900/30 backdrop-blur-[1px]"
+        onClick={onClose}
+      />
+      <div className="w-[720px] bg-white border-l border-zinc-200 flex flex-col shadow-2xl">
+        <div className="border-b px-5 py-4 flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-xs text-zinc-500 mb-1">
+              <Calculator className="size-3.5" />
+              Test calculator
+            </div>
+            <div className="font-medium">
+              Which rule wins for this scenario?
+            </div>
+            <div className="text-[11px] text-zinc-500 mt-1">
+              Active rules evaluated in priority order, most-specific match first.
+            </div>
+          </div>
+          <Button size="sm" variant="ghost" onClick={onClose} className="size-8 p-0">
+            <X className="size-4" />
+          </Button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          {/* Scenario inputs */}
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+              Scenario
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[11px] text-zinc-600 block">Customer</label>
+                <input
+                  type="text"
+                  value={t.customerName}
+                  onChange={(e) => update("customerName", e.target.value)}
+                  placeholder="(any)"
+                  className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] text-zinc-600 block">Carrier</label>
+                <input
+                  type="text"
+                  value={t.carrierName}
+                  onChange={(e) => update("carrierName", e.target.value)}
+                  placeholder="(any)"
+                  className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] text-zinc-600 block">Mode</label>
+                <select
+                  value={t.mode}
+                  onChange={(e) => update("mode", e.target.value as Mode | "")}
+                  className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white"
+                >
+                  <option value="">(any)</option>
+                  <option value="sea_fcl">Sea FCL</option>
+                  <option value="sea_lcl">Sea LCL</option>
+                  <option value="air">Air</option>
+                  <option value="road">Road</option>
+                  <option value="rail">Rail</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] text-zinc-600 block">Direction</label>
+                <select
+                  value={t.direction}
+                  onChange={(e) => update("direction", e.target.value as Direction | "")}
+                  className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white"
+                >
+                  <option value="">(any)</option>
+                  <option value="import">Import</option>
+                  <option value="export">Export</option>
+                  <option value="crosstrade">Crosstrade</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] text-zinc-600 block">Origin country</label>
+                <input
+                  type="text"
+                  value={t.originCountry}
+                  onChange={(e) =>
+                    update("originCountry", e.target.value.toUpperCase())
+                  }
+                  maxLength={2}
+                  className="w-full h-8 px-2 rounded border border-zinc-300 text-xs font-mono bg-white"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] text-zinc-600 block">Destination country</label>
+                <input
+                  type="text"
+                  value={t.destinationCountry}
+                  onChange={(e) =>
+                    update("destinationCountry", e.target.value.toUpperCase())
+                  }
+                  maxLength={2}
+                  className="w-full h-8 px-2 rounded border border-zinc-300 text-xs font-mono bg-white"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] text-zinc-600 block">Section</label>
+                <select
+                  value={t.macroGroup}
+                  onChange={(e) =>
+                    update("macroGroup", e.target.value as MacroGroup | "")
+                  }
+                  className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white"
+                >
+                  <option value="">(any)</option>
+                  <option value="origin_exw">Origin &amp; EXW</option>
+                  <option value="freight">Freight</option>
+                  <option value="destination_delivery">Destination &amp; Delivery</option>
+                  <option value="insurance_other">Insurance &amp; Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] text-zinc-600 block">Charge code</label>
+                <input
+                  type="text"
+                  value={t.chargeCode}
+                  onChange={(e) => update("chargeCode", e.target.value)}
+                  placeholder="(any)"
+                  className="w-full h-8 px-2 rounded border border-zinc-300 text-xs font-mono bg-white"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] text-zinc-600 block">Sample cost</label>
+                <input
+                  type="number"
+                  value={t.costAmount}
+                  step={0.01}
+                  onChange={(e) => update("costAmount", Number(e.target.value))}
+                  className="w-full h-8 px-2 text-right rounded border border-zinc-300 text-xs font-mono bg-white"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] text-zinc-600 block">Cost currency</label>
+                <select
+                  value={t.costCurrency}
+                  onChange={(e) => update("costCurrency", e.target.value)}
+                  className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white"
+                >
+                  <option value="GBP">GBP £</option>
+                  <option value="USD">USD $</option>
+                  <option value="EUR">EUR €</option>
+                  <option value="AUD">AUD A$</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* Winner */}
+          {winner ? (
+            <div className="border-2 border-emerald-300 bg-emerald-50/50 rounded p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <Star className="size-4 fill-emerald-500 text-emerald-500" />
+                <span className="text-[10px] uppercase tracking-wide text-emerald-700">
+                  Winner
+                </span>
+                <Badge className={`${PILL_SM} bg-zinc-100 text-zinc-700 font-mono`}>
+                  priority {rulePriority(winner.rule)}
+                </Badge>
+              </div>
+              <div className="font-medium">{winner.rule.name}</div>
+              <div className="text-xs text-zinc-700">
+                <div className="font-mono text-emerald-700 text-base">
+                  {fmtMarkup(winner.rule)}
+                </div>
+                {winner.computedSell !== undefined && (
+                  <div className="mt-1">
+                    Sample: {t.costCurrency} {t.costAmount.toFixed(2)} cost ·
+                    sell <span className="font-mono font-medium text-emerald-700">
+                      {t.costCurrency} {winner.computedSell.toFixed(2)}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <div className="text-[11px] text-zinc-600">
+                Matched fields:{" "}
+                {winner.matchedFields.length === 0 ? (
+                  <span className="italic text-zinc-500">
+                    none (this is the catch-all default)
+                  </span>
+                ) : (
+                  winner.matchedFields.map((f) => (
+                    <Badge
+                      key={f}
+                      className={`${PILL_SM} bg-emerald-100 text-emerald-800 mr-1`}
+                    >
+                      {f}
+                    </Badge>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="border-2 border-rose-300 bg-rose-50/50 rounded p-3 text-xs text-rose-800">
+              No active rule matches this scenario.
+            </div>
+          )}
+
+          {/* Other matching rules (overridden) */}
+          {otherMatches.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+                Also matched (lower priority - overridden by winner)
+              </div>
+              {otherMatches.slice(0, 5).map((m) => (
+                <div
+                  key={m.rule.ruleId}
+                  className="flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-zinc-200 bg-zinc-50"
+                >
+                  <Badge className={`${PILL_SM} bg-zinc-100 text-zinc-600 font-mono`}>
+                    {rulePriority(m.rule)}
+                  </Badge>
+                  <span className="text-zinc-700 truncate flex-1">{m.rule.name}</span>
+                  <Badge className={`${PILL_SM} bg-emerald-100 text-emerald-800 font-mono`}>
+                    {fmtMarkup(m.rule)}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Near misses */}
+          {nearMisses.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+                Near misses (rejected on first non-matching field)
+              </div>
+              {nearMisses.map((m) => (
+                <div
+                  key={m.rule.ruleId}
+                  className="flex items-center gap-2 text-xs px-3 py-1.5 rounded border border-zinc-200 hover:bg-zinc-50"
+                >
+                  <span className="text-zinc-500 truncate flex-1">{m.rule.name}</span>
+                  <Badge className={`${PILL_SM} bg-rose-100 text-rose-800`}>
+                    rejected on {m.rejectedField}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="border-t px-5 py-3 flex items-center justify-end bg-zinc-50">
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const EMPTY_RULE: MarginRule = {
   ruleId: "",
   name: "",
@@ -926,6 +1680,56 @@ export default function MarginsPage() {
   const [editing, setEditing] = useState<{ draft: MarginRule; isNew: boolean } | null>(
     null,
   );
+  const [upload, setUpload] = useState<ParsedUpload | null>(null);
+  const [testOpen, setTestOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function handleTemplate() {
+    downloadCsv("margin-rules-template.csv", makeMarginTemplate());
+  }
+
+  function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result ?? "");
+      const csvRows = parseCsv(text);
+      const allIssues: UploadIssue[] = [];
+      const parsed: MarginRule[] = [];
+      let newCount = 0;
+      let updateCount = 0;
+      csvRows.forEach((row, idx) => {
+        const { rule, issues } = csvToRule(row, idx + 2, rules);
+        allIssues.push(...issues);
+        if (rule) {
+          parsed.push(rule);
+          if (rule.ruleId && rules.some((r) => r.ruleId === rule.ruleId)) updateCount++;
+          else newCount++;
+        }
+      });
+      setUpload({
+        rows: parsed,
+        issues: allIssues,
+        totalParsed: csvRows.length,
+        newRows: newCount,
+        updatedRows: updateCount,
+      });
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    };
+    reader.readAsText(file);
+  }
+
+  function handleConfirmImport(rows: MarginRule[]) {
+    setRules((prev) => {
+      const map = new Map(prev.map((r) => [r.ruleId, r]));
+      for (const r of rows) {
+        const id = r.ruleId || nextRuleId([...map.values()]);
+        map.set(id, { ...r, ruleId: id });
+      }
+      return Array.from(map.values());
+    });
+  }
 
   function saveRule(next: MarginRule) {
     setRules((prev) => {
@@ -1014,10 +1818,29 @@ export default function MarginsPage() {
               </Badge>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" onClick={() => setTestOpen(true)}>
                 <Calculator className="size-3.5 mr-1.5" />
                 Test calculator
               </Button>
+              <Button variant="outline" size="sm" onClick={handleTemplate}>
+                <Download className="size-3.5 mr-1.5" />
+                Template
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="size-3.5 mr-1.5" />
+                Upload CSV
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                onChange={handleUpload}
+                className="hidden"
+              />
               <Button
                 size="sm"
                 className="bg-emerald-600 hover:bg-emerald-700"
@@ -1373,6 +2196,16 @@ export default function MarginsPage() {
           onClose={() => setEditing(null)}
           onSave={saveRule}
           onDelete={editing && !editing.isNew ? deleteRule : null}
+        />
+        <UploadPreviewPanel
+          parsed={upload}
+          onClose={() => setUpload(null)}
+          onConfirm={handleConfirmImport}
+        />
+        <TestCalculatorPanel
+          open={testOpen}
+          onClose={() => setTestOpen(false)}
+          rules={rules}
         />
       </div>
     </PageGuard>
