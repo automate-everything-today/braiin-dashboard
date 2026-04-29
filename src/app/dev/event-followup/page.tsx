@@ -518,6 +518,9 @@ function Inner() {
                               onSave={saveDraftEdit}
                               onRedraft={draftOne}
                               busyAction={busyAction}
+                              onChanged={async () => {
+                                if (selectedEventId) await loadContacts(selectedEventId);
+                              }}
                             />
                           </TableCell>
                         </TableRow>
@@ -544,35 +547,127 @@ function Inner() {
   );
 }
 
+const REP_OPTIONS = [
+  { email: "rob.donald@cortenlogistics.com", label: "Rob" },
+  { email: "sam.yauner@cortenlogistics.com", label: "Sam" },
+  { email: "bruna.natale@cortenlogistics.com", label: "Bruna" },
+];
+
+async function patchContact(
+  contactId: number,
+  fields: Record<string, unknown>,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch("/api/event-followup/contacts", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: contactId, ...fields }),
+  });
+  const data = await res.json();
+  if (!res.ok) return { ok: false, error: data.error };
+  return { ok: true };
+}
+
 function ExpandedDraft({
   contact,
   onSave,
   onRedraft,
   busyAction,
+  onChanged,
 }: {
   contact: ContactRow;
   onSave: (id: number, subject: string, body: string) => Promise<void>;
   onRedraft: (id: number) => Promise<void>;
   busyAction: string | null;
+  onChanged: () => Promise<void>;
 }) {
   const [subject, setSubject] = useState(contact.draft_subject ?? "");
   const [body, setBody] = useState(contact.draft_body ?? "");
+  const [sendFrom, setSendFrom] = useState(
+    contact.send_from_email ?? "rob.donald@cortenlogistics.com",
+  );
+  const [savingFrom, setSavingFrom] = useState(false);
+  const [fromErr, setFromErr] = useState<string | null>(null);
 
   useEffect(() => {
     setSubject(contact.draft_subject ?? "");
     setBody(contact.draft_body ?? "");
-  }, [contact.id, contact.draft_subject, contact.draft_body]);
+    setSendFrom(contact.send_from_email ?? "rob.donald@cortenlogistics.com");
+  }, [contact.id, contact.draft_subject, contact.draft_body, contact.send_from_email]);
+
+  // Compute auto-CC list (the OTHER two Corten reps + nothing else here -
+  // internal_cc isn't shown in the contact row but the send route will add it
+  // automatically). UI is informational; the actual CC is built server-side
+  // at send time.
+  const autoCcLabels = REP_OPTIONS
+    .filter((r) => r.email !== sendFrom)
+    .map((r) => r.label);
+
+  async function changeSender(newEmail: string) {
+    setSendFrom(newEmail);
+    setSavingFrom(true);
+    setFromErr(null);
+    const result = await patchContact(contact.id, { send_from_email: newEmail });
+    setSavingFrom(false);
+    if (!result.ok) {
+      setFromErr(result.error ?? "Save failed");
+      // revert local state
+      setSendFrom(contact.send_from_email ?? "rob.donald@cortenlogistics.com");
+    } else {
+      await onChanged();
+    }
+  }
 
   if (!contact.draft_body) {
     return (
-      <div className="p-4 text-sm text-zinc-500">
-        No draft yet. Click &quot;Draft&quot; to generate.
+      <div className="p-4 space-y-3">
+        <div className="flex items-center gap-3 text-sm">
+          <span className="text-xs uppercase tracking-wide text-zinc-500">Send from</span>
+          <select
+            value={sendFrom}
+            onChange={(e) => changeSender(e.target.value)}
+            disabled={savingFrom}
+            className="px-2 py-1 text-sm border rounded-md"
+          >
+            {REP_OPTIONS.map((r) => (
+              <option key={r.email} value={r.email}>
+                {r.label} ({r.email})
+              </option>
+            ))}
+          </select>
+          <span className="text-xs text-zinc-500">
+            CC: {autoCcLabels.join(", ")}
+          </span>
+        </div>
+        {fromErr && <div className="text-xs text-red-700">{fromErr}</div>}
+        <div className="text-sm text-zinc-500">
+          No draft yet. Click &quot;Draft&quot; to generate.
+        </div>
       </div>
     );
   }
 
   return (
     <div className="p-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <span className="text-xs uppercase tracking-wide text-zinc-500">Send from</span>
+        <select
+          value={sendFrom}
+          onChange={(e) => changeSender(e.target.value)}
+          disabled={savingFrom}
+          className="px-2 py-1 text-sm border rounded-md"
+        >
+          {REP_OPTIONS.map((r) => (
+            <option key={r.email} value={r.email}>
+              {r.label} ({r.email})
+            </option>
+          ))}
+        </select>
+        <span className="text-xs text-zinc-500">
+          CC on send: {autoCcLabels.join(", ")} + any Internal CC from Airtable
+        </span>
+        {savingFrom && <span className="text-xs text-zinc-400">saving...</span>}
+      </div>
+      {fromErr && <div className="text-xs text-red-700">{fromErr}</div>}
       <div>
         <label className="text-xs uppercase tracking-wide text-zinc-500">Subject</label>
         <input

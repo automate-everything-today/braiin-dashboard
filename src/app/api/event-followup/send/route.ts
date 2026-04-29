@@ -33,6 +33,32 @@ const sendSchema = z.object({
 
 const SENDABLE_STATUSES = new Set(["drafted", "reviewed", "queued"]);
 
+/**
+ * Auto-CC list. Every event follow-up CCs the OTHER two Corten reps so the
+ * whole team has visibility on the conference cohort, plus any internal_cc
+ * value from Airtable (regional CC routing).
+ *
+ * The sender is excluded from the CC list (they don't need to CC themselves).
+ * Duplicates are deduped.
+ */
+const CORTEN_REPS = [
+  "rob.donald@cortenlogistics.com",
+  "sam.yauner@cortenlogistics.com",
+  "bruna.natale@cortenlogistics.com",
+];
+
+function buildCcList(senderEmail: string, internalCc: string | null): string[] {
+  const sender = senderEmail.toLowerCase();
+  const ccs = new Set<string>();
+  for (const rep of CORTEN_REPS) {
+    if (rep.toLowerCase() !== sender) ccs.add(rep);
+  }
+  if (internalCc && internalCc.toLowerCase() !== sender) {
+    ccs.add(internalCc);
+  }
+  return Array.from(ccs);
+}
+
 interface SendableContact {
   id: number;
   email: string;
@@ -77,11 +103,12 @@ export async function POST(req: Request) {
   }
 
   try {
+    const ccEmails = buildCcList(contact.send_from_email, contact.internal_cc);
     const result = await sendViaGraph({
       fromEmail: contact.send_from_email,
       toEmail: contact.email,
       toName: contact.name,
-      ccEmails: contact.internal_cc ? [contact.internal_cc] : [],
+      ccEmails,
       subject: contact.draft_subject,
       body: contact.draft_body,
     });
