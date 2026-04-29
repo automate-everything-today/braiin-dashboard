@@ -36,30 +36,32 @@ export function SidebarNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="w-14 bg-[#1B2A4A] text-white p-2 flex flex-col gap-1 h-screen fixed top-0 left-0 items-center z-40">
-      <div className="mb-4 flex items-center justify-center">
+    <nav className="w-14 bg-[#1B2A4A] text-white py-2 flex flex-col h-screen fixed top-0 left-0 items-center z-40">
+      <div className="mb-2 flex items-center justify-center shrink-0">
         <img src="/brain-icon.png" alt="The Brain" className="w-8 h-8" />
       </div>
-      {nav.map((item) => {
-        const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
-        const Icon = item.icon;
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            title={item.label}
-            className={`group relative flex items-center justify-center w-10 h-10 rounded transition-colors ${
-              active ? "bg-white/15 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
-            }`}
-          >
-            <Icon size={20} className="text-white shrink-0" />
-            <span className="absolute left-full ml-2 px-2 py-1 bg-zinc-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-lg">
-              {item.label}
-            </span>
-          </Link>
-        );
-      })}
-      <div className="mt-auto flex flex-col items-center gap-1 pt-2 border-t border-white/10 w-full">
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1 items-center w-full px-2 scrollbar-thin">
+        {nav.map((item) => {
+          const active = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+          const Icon = item.icon;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              title={item.label}
+              className={`group relative flex items-center justify-center w-10 h-10 rounded transition-colors shrink-0 ${
+                active ? "bg-white/15 text-white" : "text-white/70 hover:bg-white/10 hover:text-white"
+              }`}
+            >
+              <Icon size={20} className="text-white shrink-0" />
+              <span className="absolute left-full ml-2 px-2 py-1 bg-zinc-900 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-lg">
+                {item.label}
+              </span>
+            </Link>
+          );
+        })}
+      </div>
+      <div className="shrink-0 flex flex-col items-center gap-1 pt-2 mt-1 border-t border-white/10 w-full px-2">
         <DevMenu />
       </div>
     </nav>
