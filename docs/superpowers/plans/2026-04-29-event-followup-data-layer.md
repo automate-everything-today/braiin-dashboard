@@ -82,15 +82,15 @@ git commit -m "chore: wire vitest setup file and __tests__ directory convention"
 
 All migrations applied via clipboard. Each task ends with a `pbcopy < <migration-file>` step; operator pastes into Supabase SQL editor and confirms before moving on.
 
-### Task 1.1: Migration 061 — event_contacts data layer extensions
+### Task 1.1: Migration 063 — event_contacts data layer extensions
 
 **Files:**
-- Create: `supabase/migrations/061_event_contacts_data_layer_extensions.sql`
+- Create: `supabase/migrations/063_event_contacts_data_layer_extensions.sql`
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
--- Migration 061: event_contacts data layer extensions
+-- Migration 063: event_contacts data layer extensions
 -- Adds seniority_score, data_source_tags, attention_reason, company_group_id;
 -- enforces lowercase email; adds 'needs_attention' to follow_up_status enum;
 -- adds composite (event_id, tier, name) index for the dominant query.
@@ -138,25 +138,25 @@ COMMIT;
 
 - [ ] **Step 2: Bundle to clipboard for operator paste**
 
-Run: `pbcopy < supabase/migrations/061_event_contacts_data_layer_extensions.sql`
-Expected: SQL is on the clipboard. Tell operator: "Migration 061 on clipboard. Paste into Supabase SQL editor and run; confirm success before proceeding."
+Run: `pbcopy < supabase/migrations/063_event_contacts_data_layer_extensions.sql`
+Expected: SQL is on the clipboard. Tell operator: "Migration 063 on clipboard. Paste into Supabase SQL editor and run; confirm success before proceeding."
 
 - [ ] **Step 3: Wait for operator confirmation, then commit**
 
 ```bash
-git add supabase/migrations/061_event_contacts_data_layer_extensions.sql
-git commit -m "feat(db): migration 061 - event_contacts data layer extensions"
+git add supabase/migrations/063_event_contacts_data_layer_extensions.sql
+git commit -m "feat(db): migration 063 - event_contacts data layer extensions"
 ```
 
-### Task 1.2: Migration 062 — company_groups table + FK back-reference
+### Task 1.2: Migration 064 — company_groups table + FK back-reference
 
 **Files:**
-- Create: `supabase/migrations/062_company_groups.sql`
+- Create: `supabase/migrations/064_company_groups.sql`
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
--- Migration 062: company_groups
+-- Migration 064: company_groups
 -- Creates the table that groups same-company contacts within an event,
 -- adds the FK from event_contacts.company_group_id, and a partial index.
 
@@ -184,24 +184,24 @@ COMMIT;
 
 - [ ] **Step 2: Bundle to clipboard**
 
-Run: `pbcopy < supabase/migrations/062_company_groups.sql`
+Run: `pbcopy < supabase/migrations/064_company_groups.sql`
 
 - [ ] **Step 3: Wait for operator confirmation, then commit**
 
 ```bash
-git add supabase/migrations/062_company_groups.sql
-git commit -m "feat(db): migration 062 - company_groups + FK back-reference"
+git add supabase/migrations/064_company_groups.sql
+git commit -m "feat(db): migration 064 - company_groups + FK back-reference"
 ```
 
-### Task 1.3: Migration 063 — granola_meetings + event_contact_granola_links
+### Task 1.3: Migration 065 — granola_meetings + event_contact_granola_links
 
 **Files:**
-- Create: `supabase/migrations/063_granola_ingestion.sql`
+- Create: `supabase/migrations/065_granola_ingestion.sql`
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
--- Migration 063: granola_meetings + event_contact_granola_links
+-- Migration 065: granola_meetings + event_contact_granola_links
 -- Caches Granola transcripts and links them many-to-many to event_contacts.
 
 BEGIN;
@@ -245,24 +245,24 @@ COMMIT;
 
 - [ ] **Step 2: Bundle to clipboard**
 
-Run: `pbcopy < supabase/migrations/063_granola_ingestion.sql`
+Run: `pbcopy < supabase/migrations/065_granola_ingestion.sql`
 
 - [ ] **Step 3: Wait for operator confirmation, then commit**
 
 ```bash
-git add supabase/migrations/063_granola_ingestion.sql
+git add supabase/migrations/065_granola_ingestion.sql
 git commit -m "feat(db): migration 063 - granola_meetings and links table"
 ```
 
-### Task 1.4: Migration 064 — event_media
+### Task 1.4: Migration 066 — event_media
 
 **Files:**
-- Create: `supabase/migrations/064_event_media.sql`
+- Create: `supabase/migrations/066_event_media.sql`
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
--- Migration 064: event_media
+-- Migration 066: event_media
 -- Stores per-event uploaded photos. Storage bucket created separately.
 
 BEGIN;
@@ -287,7 +287,7 @@ COMMIT;
 
 - [ ] **Step 2: Bundle to clipboard**
 
-Run: `pbcopy < supabase/migrations/064_event_media.sql`
+Run: `pbcopy < supabase/migrations/066_event_media.sql`
 
 - [ ] **Step 3: Operator creates Supabase Storage bucket `event-media` via Studio**
 
@@ -299,19 +299,19 @@ The migration alone is not enough — the operator must:
 - [ ] **Step 4: Commit migration**
 
 ```bash
-git add supabase/migrations/064_event_media.sql
+git add supabase/migrations/066_event_media.sql
 git commit -m "feat(db): migration 064 - event_media table"
 ```
 
-### Task 1.5: Migration 065 — system_rules
+### Task 1.5: Migration 067 — system_rules
 
 **Files:**
-- Create: `supabase/migrations/065_system_rules.sql`
+- Create: `supabase/migrations/067_system_rules.sql`
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
--- Migration 065: system_rules
+-- Migration 067: system_rules
 -- Operator-configurable rules engine mirroring the voice_rules pattern.
 -- One row per (category, key); previous_value JSONB column for one-step undo.
 
@@ -356,24 +356,24 @@ COMMIT;
 
 - [ ] **Step 2: Bundle to clipboard**
 
-Run: `pbcopy < supabase/migrations/065_system_rules.sql`
+Run: `pbcopy < supabase/migrations/067_system_rules.sql`
 
 - [ ] **Step 3: Wait for operator confirmation, then commit**
 
 ```bash
-git add supabase/migrations/065_system_rules.sql
+git add supabase/migrations/067_system_rules.sql
 git commit -m "feat(db): migration 065 - system_rules table"
 ```
 
-### Task 1.6: Migration 066 — seed system_rules defaults
+### Task 1.6: Migration 068 — seed system_rules defaults
 
 **Files:**
-- Create: `supabase/migrations/066_seed_system_rules_defaults.sql`
+- Create: `supabase/migrations/068_seed_system_rules_defaults.sql`
 
 - [ ] **Step 1: Write the seed migration**
 
 ```sql
--- Migration 066: seed default rules so the system works out of the box.
+-- Migration 068: seed default rules so the system works out of the box.
 -- baseline_template is intentionally empty; operator authors via /dev/system-rules.
 
 BEGIN;
@@ -416,24 +416,24 @@ COMMIT;
 
 - [ ] **Step 2: Bundle to clipboard**
 
-Run: `pbcopy < supabase/migrations/066_seed_system_rules_defaults.sql`
+Run: `pbcopy < supabase/migrations/068_seed_system_rules_defaults.sql`
 
 - [ ] **Step 3: Wait for operator confirmation, then commit**
 
 ```bash
-git add supabase/migrations/066_seed_system_rules_defaults.sql
+git add supabase/migrations/068_seed_system_rules_defaults.sql
 git commit -m "feat(db): migration 066 - seed system_rules defaults"
 ```
 
-### Task 1.7: Migration 067 — import_audit_log
+### Task 1.7: Migration 069 — import_audit_log
 
 **Files:**
-- Create: `supabase/migrations/067_import_audit_log.sql`
+- Create: `supabase/migrations/069_import_audit_log.sql`
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
--- Migration 067: import_audit_log
+-- Migration 069: import_audit_log
 -- Per-record outcome of every import run, plus a rules_snapshot per run.
 
 BEGIN;
@@ -463,24 +463,24 @@ COMMIT;
 
 - [ ] **Step 2: Bundle to clipboard**
 
-Run: `pbcopy < supabase/migrations/067_import_audit_log.sql`
+Run: `pbcopy < supabase/migrations/069_import_audit_log.sql`
 
 - [ ] **Step 3: Wait for operator confirmation, then commit**
 
 ```bash
-git add supabase/migrations/067_import_audit_log.sql
+git add supabase/migrations/069_import_audit_log.sql
 git commit -m "feat(db): migration 067 - import_audit_log"
 ```
 
-### Task 1.8: Migration 068 — extend activity.llm_calls with rules_snapshot_id
+### Task 1.8: Migration 070 — extend activity.llm_calls with rules_snapshot_id
 
 **Files:**
-- Create: `supabase/migrations/068_llm_calls_rules_snapshot.sql`
+- Create: `supabase/migrations/070_llm_calls_rules_snapshot.sql`
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
--- Migration 068: extend activity.llm_calls with rules snapshot reference.
+-- Migration 070: extend activity.llm_calls with rules snapshot reference.
 -- The table already exists from migration 026; this only adds nullable cols.
 
 BEGIN;
@@ -499,12 +499,12 @@ COMMIT;
 
 - [ ] **Step 2: Bundle to clipboard**
 
-Run: `pbcopy < supabase/migrations/068_llm_calls_rules_snapshot.sql`
+Run: `pbcopy < supabase/migrations/070_llm_calls_rules_snapshot.sql`
 
 - [ ] **Step 3: Wait for operator confirmation, then commit**
 
 ```bash
-git add supabase/migrations/068_llm_calls_rules_snapshot.sql
+git add supabase/migrations/070_llm_calls_rules_snapshot.sql
 git commit -m "feat(db): migration 068 - llm_calls rules snapshot columns"
 ```
 
@@ -528,7 +528,7 @@ Expected: 0 errors. If any, the regeneration produced incompatible types — fix
 
 ```bash
 git add src/types/database.ts
-git commit -m "chore(types): regenerate database types after migrations 061-068"
+git commit -m "chore(types): regenerate database types after migrations 063-070"
 ```
 
 ---

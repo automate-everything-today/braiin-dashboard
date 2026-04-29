@@ -238,7 +238,7 @@ This spec covers the **data layer fixes only**. The UX redesign that solves the 
 
 Migration numbers TBD by next available slot; current head is 060. Order matters — the FK between `event_contacts.company_group_id` and `company_groups.id` is circular with `company_groups.lead_contact_id` and `event_contacts.id`, so creation must be staged.
 
-### 5.1 Migration `061_event_contacts_data_layer_extensions.sql`
+### 5.1 Migration `063_event_contacts_data_layer_extensions.sql`
 
 ```sql
 -- Additive columns on event_contacts.
@@ -285,7 +285,7 @@ CREATE INDEX IF NOT EXISTS event_contacts_event_tier_name_idx
   ON event_contacts (event_id, tier, name);
 ```
 
-### 5.2 Migration `062_company_groups.sql`
+### 5.2 Migration `064_company_groups.sql`
 
 ```sql
 CREATE TABLE company_groups (
@@ -308,7 +308,7 @@ CREATE INDEX IF NOT EXISTS event_contacts_company_group_idx
   ON event_contacts (company_group_id) WHERE company_group_id IS NOT NULL;
 ```
 
-### 5.3 Migration `063_granola_ingestion.sql`
+### 5.3 Migration `065_granola_ingestion.sql`
 
 ```sql
 CREATE TABLE granola_meetings (
@@ -347,7 +347,7 @@ CREATE POLICY granola_links_authenticated_read ON event_contact_granola_links
   FOR SELECT USING ((SELECT auth.role()) = 'authenticated');
 ```
 
-### 5.4 Migration `064_event_media.sql`
+### 5.4 Migration `066_event_media.sql`
 
 ```sql
 CREATE TABLE event_media (
@@ -370,7 +370,7 @@ CREATE POLICY event_media_authenticated_read ON event_media
 -- restricting upload to manager+ roles.
 ```
 
-### 5.5 Migration `065_system_rules.sql`
+### 5.5 Migration `067_system_rules.sql`
 
 ```sql
 CREATE TABLE system_rules (
@@ -400,11 +400,11 @@ CREATE POLICY system_rules_authenticated_read ON system_rules
 -- can be tightened later if direct PostgREST writes become a concern.
 ```
 
-### 5.6 Migration `066_seed_system_rules_defaults.sql`
+### 5.6 Migration `068_seed_system_rules_defaults.sql`
 
 Seed `seniority_score`, `company_match`, `granola_match`, `model_routing` with sensible defaults so the system works out of the box. `baseline_template` rows left empty until operator runs the questionnaire.
 
-### 5.7 Migration `067_import_audit_log.sql`
+### 5.7 Migration `069_import_audit_log.sql`
 
 ```sql
 CREATE TABLE import_audit_log (
@@ -424,7 +424,7 @@ CREATE INDEX IF NOT EXISTS import_audit_airtable_idx
   ON import_audit_log (airtable_record_id);
 ```
 
-### 5.8 Migration `068_llm_call_log.sql` (if not already present)
+### 5.8 Migration `070_llm_calls_rules_snapshot.sql` (if not already present)
 
 ```sql
 CREATE TABLE IF NOT EXISTS llm_call_log (
