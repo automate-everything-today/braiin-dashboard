@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { PILL_SM } from "@/lib/ui-constants";
 import { BraiinLoader } from "@/components/braiin-loader";
+import { PushToBuildQueueButton, buildPromptForRoadmapNode } from "@/components/push-to-build-queue";
 
 interface RoadmapNode {
   node_id: string;
@@ -206,6 +207,13 @@ function NodeRow(props: NodeRowProps) {
                   >
                     <Plus className="size-2.5" /> child
                   </button>
+                  <PushToBuildQueueButton
+                    source_type="roadmap"
+                    source_id={n.node_id}
+                    title={n.title}
+                    context={buildPromptForRoadmapNode(n, tree.get(n.parent_id)?.find?.((x) => x.node_id === n.node_id) ? null : null)}
+                    compact
+                  />
                   <button
                     onClick={() => onRequestDelete(n.node_id)}
                     className="text-[10px] text-rose-700 hover:bg-rose-50 px-1.5 py-0.5 rounded"

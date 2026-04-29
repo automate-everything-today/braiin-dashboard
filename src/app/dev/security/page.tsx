@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { PILL_SM } from "@/lib/ui-constants";
 import { BraiinLoader } from "@/components/braiin-loader";
+import { PushToBuildQueueButton, buildPromptForFinding } from "@/components/push-to-build-queue";
 
 type Severity = "critical" | "high" | "medium" | "low";
 type FindingStatus = "open" | "acknowledged" | "resolved" | "wontfix";
@@ -824,6 +825,14 @@ function FindingRow({
                   Reopen
                 </Button>
               )}
+              <div className="ml-auto">
+                <PushToBuildQueueButton
+                  source_type="finding"
+                  source_id={finding.finding_id}
+                  title={`Fix: ${finding.title}`}
+                  context={buildPromptForFinding(finding)}
+                />
+              </div>
             </div>
           </div>
         </CardContent>

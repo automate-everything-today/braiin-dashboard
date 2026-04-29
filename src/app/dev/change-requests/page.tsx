@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { PILL_SM } from "@/lib/ui-constants";
 import { BraiinLoader } from "@/components/braiin-loader";
+import { PushToBuildQueueButton, buildPromptForChangeRequest } from "@/components/push-to-build-queue";
 
 type Status =
   | "new"
@@ -497,6 +498,14 @@ function RequestCard({
               >
                 <X className="size-3 mr-1" /> Reject
               </Button>
+              <div className="ml-auto">
+                <PushToBuildQueueButton
+                  source_type="change_request"
+                  source_id={req.request_id}
+                  title={req.title}
+                  context={buildPromptForChangeRequest(req)}
+                />
+              </div>
             </div>
           </div>
 
