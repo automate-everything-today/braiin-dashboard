@@ -4,6 +4,17 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### Security monitoring - intrusion detection + Telegram alerts
+
+- **`src/lib/security/notify.ts`** - Telegram send helper using the existing `@bobbadobbabot` bot. `sendTelegram()` is best-effort (never throws). `formatSecurityAlert()` renders a security_event into a Markdown message with severity emoji and a /dev/security link. `hmacSign` / `hmacVerify` use Web Crypto so the same code runs in both edge (proxy.ts) and node (route handler) runtimes.
+- **`/api/security/proxy-event` route** - sink for the edge proxy. Validated by HMAC-SHA256 of the request body using `PROXY_LOG_SECRET`, anti-replay window of 60s on the embedded timestamp. Allowlisted in `proxy.ts` itself so the proxy doesn't block its own callback. Closes the long-standing gap where proxy-level auth failures (no cookie / invalid JWT / expired session) never landed in `feedback.security_events` because the edge runtime can't talk to Supabase directly.
+- **`src/proxy.ts`** updated to fire-and-forget HMAC-signed POST to the proxy-event sink on every 401. Three cases: `auth_failure / no_cookie` (medium), `auth_failure / invalid_jwt` (high - someone is presenting a forged or rotated token), `session_expired / jwt_expired` (low - benign). Best-effort; never blocks the 401 response on network latency.
+- **Migration `052_security_events_alerted_at.sql`** - adds `alerted_at TIMESTAMPTZ` column + partial index on `WHERE alerted_at IS NULL` so the alerting cron only scans the open queue. Idempotent via `ADD COLUMN IF NOT EXISTS`. Applied directly via the Management API on first deploy.
+- **`/api/cron/security-alert` route** - runs every 5 minutes via `vercel.json`. Pulls unalerted events older than 10s (avoids races with in-flight inserts) and younger than 1 hour (avoids backfill blast). CRITICAL + HIGH fire immediate per-event Telegrams. MEDIUM + LOW are bucketed by source key (IP / email / event_type fallback); buckets with 5+ events fire a single cluster alert; buckets below the threshold get marked alerted but nothing is sent. Updates `alerted_at` after sending so the next run skips.
+- **`/api/cron/security-digest` route** - runs daily at 09:00 UTC. Aggregates yesterday's events by severity, type, top IPs, top users. Single Telegram digest message. Quiet recap so the operator stays oriented without subscribing to every event.
+- **vercel.json crons added:** `*/5 * * * *` for security-alert, `0 9 * * *` for security-digest.
+- **Telegram channel reused:** the same `@bobbadobbabot` Rob already uses locally now receives alerts from the dashboard. Bot token + chat ID stored in Vercel env (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`). `PROXY_LOG_SECRET` was generated fresh with `openssl rand -hex 32` and added the same way.
+
 ### Costs dashboard - Supabase fetcher (token verification only)
 
 - **`src/lib/costs/sources/supabase.ts`** rewritten after live testing of the Supabase Management API. Probed endpoints `/v1/projects/{ref}/usage`, `/v1/organizations/{slug}/usage`, and `/v1/organizations/{slug}/billing/subscription` - all return 404 in the current API. Usage/billing data is dashboard-only as of 2026-04-29. The fetcher now does a token + project-ref validity check (hits `/v1/projects/{ref}` so a rotated token gets a fast green light) and returns a clear "use Close month modal" message. Swap in the real fetch + insert when Supabase ships a usage endpoint.
