@@ -343,4 +343,44 @@ describe("importEventContacts (audit-aware)", () => {
     expect(result).toHaveProperty("run_id");
     expect(Array.isArray(result.imported_event_ids)).toBe(true);
   });
+
+  it("audit log for no-email record includes synthesised email in fields_landed", async () => {
+    const snapshot = makeSnapshot();
+    await importEventContacts({ runId: "run-audit-fields", snapshot }, injectRecords());
+
+    const auditInserts = supabaseCalls.filter(
+      (c) => c.table === "import_audit_log" && c.method === "insert",
+    );
+    expect(auditInserts).toHaveLength(1);
+
+    const auditPayload = auditInserts[0].payload as Array<Record<string, unknown>>;
+    const noEmailAuditRow = auditPayload.find(
+      (row) => row.result === "needs_attention:no_email",
+    );
+    expect(noEmailAuditRow).toBeDefined();
+
+    // The synthesised email should be included in fields_landed.
+    const fieldsLanded = noEmailAuditRow!.fields_landed as string[];
+    expect(fieldsLanded).toContain("email");
+  });
+
+  it("audit log for record with email includes email in fields_landed without duplication", async () => {
+    const snapshot = makeSnapshot();
+    await importEventContacts({ runId: "run-audit-dedup", snapshot }, injectRecords());
+
+    const auditInserts = supabaseCalls.filter(
+      (c) => c.table === "import_audit_log" && c.method === "insert",
+    );
+    expect(auditInserts).toHaveLength(1);
+
+    const auditPayload = auditInserts[0].payload as Array<Record<string, unknown>>;
+    const normalAuditRow = auditPayload.find((row) => row.result === "imported");
+    expect(normalAuditRow).toBeDefined();
+
+    // The real email should be included exactly once.
+    const fieldsLanded = normalAuditRow!.fields_landed as string[];
+    const emailCount = fieldsLanded.filter((f) => f === "email").length;
+    expect(emailCount).toBe(1);
+    expect(fieldsLanded).toContain("email");
+  });
 });

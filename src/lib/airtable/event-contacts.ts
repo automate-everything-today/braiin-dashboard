@@ -447,11 +447,16 @@ async function buildAndPersistRows(
           });
         } else {
           needsAttention++;
+          const baseFieldsLanded = fieldsLanded(presentFields, false);
+          // Synthesised placeholder email is written to DB; include it in fields_landed.
+          if (!baseFieldsLanded.includes("email")) {
+            baseFieldsLanded.push("email");
+          }
           auditRows.push({
             airtable_record_id: rec.id,
             result: "needs_attention:no_email",
             fields_present: presentFields,
-            fields_landed: fieldsLanded(presentFields, false),
+            fields_landed: baseFieldsLanded,
             rules_snapshot: opts.snapshot.raw,
             run_id: opts.runId,
           });
