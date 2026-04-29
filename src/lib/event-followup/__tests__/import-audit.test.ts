@@ -84,7 +84,27 @@ vi.mock("@/services/base", () => {
     } else if (table === "event_contacts") {
       chain.select = vi.fn((cols: string) => {
         supabaseCalls.push({ table, method: "select", payload: cols });
-        return chain;
+        // For group detection: .select(...).eq("event_id", ...) must resolve.
+        // Return a chain that resolves on .eq() to an empty array (no groups).
+        const selectChain: Record<string, unknown> = {};
+        selectChain.eq = vi.fn((_col: string, _val: unknown) => {
+          // isNeedsAttentionLookup path uses airtable_record_id -> different chain below
+          if (_col === "airtable_record_id") {
+            isNeedsAttentionLookup = true;
+            return chain;
+          }
+          // group detection: eq("event_id", ...) - return empty contacts list
+          return resolved([], null);
+        });
+        selectChain.is = vi.fn(() => chain);
+        selectChain.limit = vi.fn((_n: number) => {
+          if (isNeedsAttentionLookup) {
+            const existing = existingNeedsAttentionRowRef.value;
+            return resolved(existing ? [existing] : [], null);
+          }
+          return resolved(null, null);
+        });
+        return selectChain;
       });
 
       chain.upsert = vi.fn((payload: unknown, _opts?: unknown) => {
@@ -97,6 +117,7 @@ vi.mock("@/services/base", () => {
         supabaseCalls.push({ table, method: "update", payload });
         return {
           eq: (_col: string, _val: unknown) => resolved(null, null),
+          in: (_col: string, _vals: unknown) => resolved(null, null),
         };
       });
 
@@ -106,6 +127,29 @@ vi.mock("@/services/base", () => {
           select: (_cols: string) => ({
             limit: (_n: number) => resolved([{ id: 999 }], null),
           }),
+        };
+      });
+    } else if (table === "company_groups") {
+      // Stub for group detection pass: return empty (no existing groups).
+      chain.select = vi.fn(() => ({
+        eq: (_col: string, _val: unknown) => ({
+          eq: (_col2: string, _val2: unknown) => ({
+            maybeSingle: () => resolved(null, null),
+          }),
+        }),
+      }));
+      chain.insert = vi.fn((payload: unknown) => {
+        supabaseCalls.push({ table, method: "insert", payload });
+        return {
+          select: (_cols: string) => ({
+            single: () => resolved({ id: 1001 }, null),
+          }),
+        };
+      });
+      chain.update = vi.fn((payload: unknown) => {
+        supabaseCalls.push({ table, method: "update", payload });
+        return {
+          eq: (_col: string, _val: unknown) => resolved(null, null),
         };
       });
     } else {

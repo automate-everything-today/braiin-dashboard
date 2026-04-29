@@ -55,6 +55,7 @@
 import { supabase } from "@/services/base";
 import type { RulesSnapshot } from "@/lib/system-rules/types";
 import { scoreTitle } from "@/lib/event-followup/seniority";
+import { detectGroups } from "@/lib/event-followup/group-detection";
 
 const AIRTABLE_BASE_ID = "appDiP9IKunUqdPl1";
 const AIRTABLE_TABLE_ID = "tblMriM6Fox1AatVR";
@@ -93,6 +94,11 @@ export interface ImportResult {
   errors: string[];
   run_id: string;
   imported_event_ids: number[]; // distinct events that received contacts
+  groups: {
+    groups_created: number;
+    groups_updated: number;
+    members_tagged: number;
+  };
 }
 
 export interface ImportOpts {
@@ -669,6 +675,104 @@ async function buildAndPersistRows(
   return { imported, needsAttention, errors, importedEventIds };
 }
 
+interface GroupDetectionContact {
+  id: number;
+  company: string | null;
+  title: string | null;
+  is_lead_contact: boolean;
+  seniority_score: number;
+}
+
+async function runGroupDetection(
+  eventId: number,
+  snapshot: RulesSnapshot,
+): Promise<{ groups_created: number; groups_updated: number; members_tagged: number }> {
+  const { data: rows, error } = await supabase
+    .from("event_contacts")
+    .select("id, company, title, is_lead_contact, seniority_score")
+    .eq("event_id", eventId);
+  if (error) {
+    throw new Error(`runGroupDetection select failed: ${error.message}`);
+  }
+
+  const contacts: GroupDetectionContact[] = (rows ?? []).map((r) => ({
+    id: r.id as number,
+    company: r.company as string | null,
+    title: r.title as string | null,
+    is_lead_contact: (r.is_lead_contact as boolean | null) ?? false,
+    seniority_score: (r.seniority_score as number | null) ?? 0,
+  }));
+
+  const groups = detectGroups(contacts, snapshot.companyMatch);
+
+  let created = 0;
+  let updated = 0;
+  let membersTagged = 0;
+
+  for (const g of groups) {
+    // Look up existing group.
+    const { data: existing } = await supabase
+      .from("company_groups")
+      .select("id, lead_overridden_at, lead_contact_id")
+      .eq("event_id", eventId)
+      .eq("company_name_canonical", g.company_name_canonical)
+      .maybeSingle();
+
+    let groupId: number;
+    let effectiveLeadId: number;
+    if (existing) {
+      groupId = existing.id as number;
+      const overridden = (existing.lead_overridden_at as string | null) !== null;
+      effectiveLeadId = overridden
+        ? (existing.lead_contact_id as number) ?? g.lead_contact_id
+        : g.lead_contact_id;
+      if (!overridden) {
+        const { error: updErr } = await supabase
+          .from("company_groups")
+          .update({ lead_contact_id: g.lead_contact_id })
+          .eq("id", groupId);
+        if (updErr) throw new Error(`company_groups update failed: ${updErr.message}`);
+      }
+      updated++;
+    } else {
+      const { data: created_, error: insErr } = await supabase
+        .from("company_groups")
+        .insert({
+          event_id: eventId,
+          company_name_canonical: g.company_name_canonical,
+          lead_contact_id: g.lead_contact_id,
+        })
+        .select("id")
+        .single();
+      if (insErr || !created_) {
+        throw new Error(`company_groups insert failed: ${insErr?.message ?? "no row returned"}`);
+      }
+      groupId = (created_ as { id: number }).id;
+      effectiveLeadId = g.lead_contact_id;
+      created++;
+    }
+
+    // Tag every member's company_group_id and set contact_role to 'cc' first.
+    if (g.member_ids.length > 0) {
+      const { error: tagErr } = await supabase
+        .from("event_contacts")
+        .update({ company_group_id: groupId, contact_role: "cc" })
+        .in("id", g.member_ids);
+      if (tagErr) throw new Error(`event_contacts tag failed: ${tagErr.message}`);
+      membersTagged += g.member_ids.length;
+    }
+
+    // Override lead to 'to' after the bulk 'cc' assignment above.
+    const { error: leadErr } = await supabase
+      .from("event_contacts")
+      .update({ contact_role: "to" })
+      .eq("id", effectiveLeadId);
+    if (leadErr) throw new Error(`event_contacts lead update failed: ${leadErr.message}`);
+  }
+
+  return { groups_created: created, groups_updated: updated, members_tagged: membersTagged };
+}
+
 export async function fetchAllAirtableRecordsForAudit(): Promise<Array<{
   id: string;
   email: string | null;
@@ -710,6 +814,21 @@ export async function importEventContacts(
   const { imported, needsAttention, errors, importedEventIds } =
     await buildAndPersistRows(records, opts);
 
+  const groups = { groups_created: 0, groups_updated: 0, members_tagged: 0 };
+
+  for (const eventId of importedEventIds) {
+    try {
+      const detection = await runGroupDetection(eventId, opts.snapshot);
+      groups.groups_created += detection.groups_created;
+      groups.groups_updated += detection.groups_updated;
+      groups.members_tagged += detection.members_tagged;
+    } catch (err) {
+      errors.push(
+        `runGroupDetection failed for event ${eventId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   return {
     fetched: records.length,
     imported,
@@ -717,5 +836,6 @@ export async function importEventContacts(
     errors,
     run_id: opts.runId,
     imported_event_ids: Array.from(importedEventIds),
+    groups,
   };
 }
