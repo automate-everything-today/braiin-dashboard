@@ -4,6 +4,28 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### Outbound + voice - event follow-up build (M1)
+
+- **`docs/voice/anti-ai-writing-style.md`** - design contract for the anti-AI writing style guide. 4 ban categories (words, phrases, structures, formatting, tone) plus tone markers, all with replacement guidance. Channel-aware (email is strictest, messaging/social looser). 7 annotated voice examples from real sent emails (4 Rob, 2 Sam, 1 Bruna) with per-rep voice notes. Bruna's bilingual Portuguese/English voice captured.
+- **Migration `056_voice_rules.sql`** - `voice_rules` table with `replacement` NOT NULL (meta-rule: every ban needs a replacement). Channel scoping (all/email/messaging/social), severity (block/warn), catch-count tracking via `voice_rules_record_catch` RPC. Functional unique index on (rule_type, lower(pattern), channel).
+- **Migration `057_seed_voice_rules.sql`** - ~75 seed rules from the markdown design contract: banned_word (26), banned_phrase (7), banned_tone (24), banned_structure (10), banned_formatting (em+en dash). Each with a concrete replacement.
+- **Migration `058_event_attribution.sql`** - `events` + `event_contacts` tables. `events.via_network_id` FK to freight_networks for ROI scaffolding (deferred per Option B scoping). `event_contacts` mirrors Airtable schema (airtable_record_id upsert key, met_by[], lead_contact, contact_role, tier 1-5) with full follow-up state machine (pending -> already_engaged / drafted -> reviewed -> queued -> sent -> replied/bounced/opted_out/cancelled). Seeds Intermodal 2026 (via WCA), GKF/ULN Summit 2026 (standalone), plus historical Intermodal 2024+2025 placeholders. Adds GKF/ULN Network row to freight_networks.
+- **`src/lib/voice/lint.ts`** - cached, channel-aware linter. Loads active voice_rules with 30s in-process cache, scans drafts via `matchAll()` with word-boundary semantics for single-word patterns. `recordCatches()` increments catch counters fire-and-forget for telemetry. `invalidateVoiceRulesCache()` called by every voice_rules write.
+- **`src/lib/voice/types.ts`** - shared types for the linter + API + UI.
+- **`/api/voice-rules` route** - CRUD with role gate (read = any staff, write = manager+). Soft-delete preserves catch history. Unique violation handled with 409.
+- **`/dev/voice` page** - tabbed admin UI by rule_type, search/filter, add-rule form (enforces replacement field), inline disable/enable, catch count visible per rule.
+- **`src/lib/airtable/event-contacts.ts`** - one-way sync from "Networking - Follow ups" base. Maps Airtable fields to event_contacts columns. Filters `Met By` to actual people (Rob/Sam/Bruna) and resolves to email addresses. Skips records without email or unresolvable event. Upserts on airtable_record_id; preserves Braiin-side state (sent_at, draft_body) on re-import.
+- **`/api/event-followup/import` route** - GET returns per-event status counts; POST runs `importEventContacts()`.
+- **`src/lib/event-followup/already-engaged.ts`** - inbound-only engagement scanner against email_classifications since event start. v1 limitation: outbound coverage requires Sam/Bruna mailbox delegation post-tenant-consent (operator can manually flag in UI for now).
+- **`/api/event-followup/scan` route** - wraps `scanEventEngagement()`.
+- **`src/lib/event-followup/generate-draft.ts`** - draft generator using LLM gateway (claude-sonnet-4-6) with ephemeral cache on the system prompt. Loads active voice_rules + per-rep voice notes (Rob/Sam/Bruna hardcoded annotations from real samples). Bruna's voice prompt switches to Brazilian Portuguese for BR contacts. Regenerate-on-block loop with max 2 retries; surviving blocks demoted to warns for operator review. JSON output (subject + body), parser tolerant of code-fence wrapping.
+- **`src/lib/event-followup/send-via-graph.ts`** - Microsoft Graph send-as adapter using existing client-credentials flow (AZURE_CLIENT_ID/SECRET/TENANT_ID). Requires Mail.Send Application permission on the Azure AD app + admin consent. saveToSentItems=true so reps see their own send.
+- **`/api/event-followup/draft` route** - single-contact (`{contact_id, force?}`) or batch (`{event_id, limit}`) draft generation. Persists draft_subject/body/generated_at/model + bumps follow_up_status to 'drafted'.
+- **`/api/event-followup/send` route** - sends one draft via Graph as the rep tagged in send_from_email. State transitions: drafted/reviewed -> sent on success, -> bounced with reason on failure.
+- **`/api/event-followup/contacts` route** - GET ?event_id lists; PATCH updates draft fields, status overrides, send-from rep, tier.
+- **`/dev/event-followup` page** - operator surface. Event selector with per-event status counts, action bar (Import from Airtable, Scan engagement, Draft batch 10/50), filter+search, contact table with inline expand to edit/regenerate/save/send.
+- **Sidebar nav** - new "Outbound + voice" section in `/dev` flyout: Event follow-ups (Trophy icon) + Voice rules (AlertTriangle icon).
+
 ### Security - incident response (Phase 5)
 
 - **Migration 054**: `feedback.ip_blocklist` (with auto-expiry), `feedback.system_flags` (lockdown_mode_active + session_min_iat seeded), `feedback.security_actions_log` (immutable operator-action audit). Applied via Mgmt API.

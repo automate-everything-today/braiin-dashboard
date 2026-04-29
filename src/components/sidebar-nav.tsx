@@ -139,6 +139,13 @@ const DEV: FlyoutSection[] = [
       { href: "/dev/build-queue", label: "Build queue", description: "Push items to terminal via braiin-pull", icon: Activity },
     ],
   },
+  {
+    label: "Outbound + voice",
+    pages: [
+      { href: "/dev/event-followup", label: "Event follow-ups", description: "Post-conference contact pipeline + AI drafts", icon: Trophy },
+      { href: "/dev/voice", label: "Voice rules", description: "Anti-AI writing style: banned words + replacements", icon: AlertTriangle },
+    ],
+  },
 ];
 
 export function SidebarNav() {
