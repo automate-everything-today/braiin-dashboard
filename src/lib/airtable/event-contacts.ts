@@ -669,6 +669,39 @@ async function buildAndPersistRows(
   return { imported, needsAttention, errors, importedEventIds };
 }
 
+export async function fetchAllAirtableRecordsForAudit(): Promise<Array<{
+  id: string;
+  email: string | null;
+  event_name: string | null;
+  name: string | null;
+  title: string | null;
+  company: string | null;
+  country: string | null;
+  region: string | null;
+  meeting_notes: string | null;
+  company_info: string | null;
+}>> {
+  const records = await fetchAllRecords();
+  return records.map((rec) => {
+    const f = rec.fields;
+    const eventNames = asStringArray(f["Event"]);
+    return {
+      id: rec.id,
+      email: asString(f["Email"]),
+      // For audit purposes, take the first event name. Records with multiple events
+      // produce multiple DB rows in the importer; the audit only needs one comparison.
+      event_name: eventNames[0] ?? null,
+      name: asString(f["Name"]),
+      title: asString(f["Title"]),
+      company: asString(f["Company"]),
+      country: asString(f["Country"]),
+      region: asString(f["Region"]),
+      meeting_notes: asString(f["Meeting Notes"]),
+      company_info: asString(f["Company Info"]),
+    };
+  });
+}
+
 export async function importEventContacts(
   opts: ImportOpts,
   _fetchRecords: () => Promise<AirtableRecord[]> = fetchAllRecords,
