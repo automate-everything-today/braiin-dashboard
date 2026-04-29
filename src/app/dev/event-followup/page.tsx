@@ -1148,26 +1148,6 @@ function NeedsAttentionView({
               size="sm"
               variant="outline"
               className="h-7 text-xs"
-              disabled={bulkBusy || busyAction === `bulk-merge-${selectedIds.size}`}
-              onClick={async () => {
-                const sources = contacts
-                  .filter((c) => selectedIds.has(c.id))
-                  .map((c) => ({
-                    sourceId: c.id,
-                    targetId: c.co_company_contacts?.[0]?.id ?? null,
-                  }));
-                await onBulkMergeIntoColleagues(sources);
-                setSelectedIds(new Set());
-              }}
-            >
-              {busyAction === `bulk-merge-${selectedIds.size}`
-                ? "Merging..."
-                : `Merge ${selectedIds.size} into colleagues`}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs"
               disabled={bulkBusy}
               onClick={async () => {
                 await onBulkMarkJunk(Array.from(selectedIds));
