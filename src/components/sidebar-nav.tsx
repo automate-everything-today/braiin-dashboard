@@ -136,6 +136,7 @@ const DEV: FlyoutSection[] = [
       { href: "/dev/roadmap", label: "Roadmap", description: "CTO mind map - private", icon: BarChart3 },
       { href: "/dev/security", label: "Security", description: "Posture + findings + event stream", icon: ShieldCheck },
       { href: "/dev/costs", label: "Costs + counterfactual", description: "Spend tracking + traditional-team comparison", icon: Wallet },
+      { href: "/dev/build-queue", label: "Build queue", description: "Push items to terminal via braiin-pull", icon: Activity },
     ],
   },
 ];
