@@ -601,6 +601,25 @@ function Inner() {
               await loadNeedsAttention();
             });
           }}
+          onMergeInto={async (sourceId, targetId) => {
+            return runAction(`merge-${sourceId}`, async () => {
+              const res = await fetch("/api/event-followup/contacts/merge", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ source_id: sourceId, target_id: targetId }),
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || "Merge failed");
+              const fields = (data.fields_merged ?? []) as string[];
+              setActionResult(
+                fields.length > 0
+                  ? `Merged into existing contact (${fields.join(", ")} carried over).`
+                  : "Merged into existing contact (no new fields to carry over).",
+              );
+              await loadNeedsAttention();
+              if (selectedEventId) await loadContacts(selectedEventId);
+            });
+          }}
           onBulkAssignEvent={async (ids, eventId) => {
             return runAction(`bulk-assign-${ids.length}`, async () => {
               const res = await fetch("/api/event-followup/contacts/bulk", {
@@ -933,6 +952,7 @@ function NeedsAttentionView({
   busyAction,
   onAssignEvent,
   onMarkJunk,
+  onMergeInto,
   onBulkAssignEvent,
   onBulkMarkJunk,
   loading,
@@ -942,6 +962,7 @@ function NeedsAttentionView({
   busyAction: string | null;
   onAssignEvent: (contactId: number, eventId: number) => Promise<void>;
   onMarkJunk: (contactId: number) => Promise<void>;
+  onMergeInto: (sourceId: number, targetId: number) => Promise<void>;
   onBulkAssignEvent: (ids: number[], eventId: number) => Promise<void>;
   onBulkMarkJunk: (ids: number[]) => Promise<void>;
   loading: boolean;
@@ -1226,6 +1247,24 @@ function NeedsAttentionView({
                             busy={busyAction === `assign-event-${c.id}`}
                             onAssign={onAssignEvent}
                           />
+                        )}
+                        {(c.co_company_contacts?.length ?? 0) > 0 && (
+                          <select
+                            className="px-2 py-1 text-xs border rounded-md bg-white max-w-[160px]"
+                            disabled={busyAction === `merge-${c.id}`}
+                            value=""
+                            onChange={(e) => {
+                              const targetId = parseInt(e.target.value, 10);
+                              if (targetId) onMergeInto(c.id, targetId);
+                            }}
+                          >
+                            <option value="">Merge into...</option>
+                            {c.co_company_contacts!.map((cc) => (
+                              <option key={cc.id} value={String(cc.id)}>
+                                {(cc.name ?? cc.email.split("@")[0]).slice(0, 30)} ({cc.event_name?.split(" ")[0] ?? "no event"})
+                              </option>
+                            ))}
+                          </select>
                         )}
                         {needsEmail && (
                           <>
