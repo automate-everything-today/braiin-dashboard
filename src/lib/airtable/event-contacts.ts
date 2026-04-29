@@ -307,7 +307,11 @@ async function upsertRows(
       .from("event_contacts")
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .upsert(chunk as any, {
-        onConflict: "airtable_record_id",
+        // Upsert on (email, event_id) - the natural unique pair. One row
+        // per contact per event so a contact attending both Intermodal and
+        // GKF gets two follow-up rows with independent state. See migration
+        // 060 for the index rework.
+        onConflict: "email,event_id",
         // We want the import to overwrite Airtable-side fields (name, notes,
         // tier, met_by) but NOT overwrite Braiin-side state (follow_up_status,
         // sent_at, draft_body). Since upsert only sets the columns we provide,

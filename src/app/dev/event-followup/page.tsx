@@ -179,9 +179,22 @@ function Inner() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Import failed");
       const r = data.result;
-      setActionResult(
+
+      // Build a richer summary so 0-imported runs explain themselves.
+      const parts: string[] = [
         `Imported ${r.imported} contacts (${r.fetched} fetched, ${r.skipped} skipped).`,
-      );
+      ];
+      if (r.skip_reasons && Object.keys(r.skip_reasons).length > 0) {
+        const reasonStr = Object.entries(r.skip_reasons as Record<string, number>)
+          .map(([reason, count]) => `${count} ${reason}`)
+          .join(", ");
+        parts.push(`Skip reasons: ${reasonStr}.`);
+      }
+      if (r.errors && r.errors.length > 0) {
+        parts.push(`Errors: ${r.errors.slice(0, 3).join("; ")}${r.errors.length > 3 ? ` (+${r.errors.length - 3} more)` : ""}`);
+      }
+      setActionResult(parts.join(" "));
+
       await loadEvents();
       if (selectedEventId) await loadContacts(selectedEventId);
     });
