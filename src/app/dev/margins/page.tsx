@@ -51,6 +51,7 @@ import {
   X,
 } from "lucide-react";
 import { downloadCsv, parseCsv, serializeCsv, type CsvRow } from "@/lib/csv";
+import { CHARGE_CODES } from "@/lib/quotes/charge-codes-data";
 
 const PILL_SM =
   "text-[10px] px-1.5 py-0 leading-[18px] h-[18px] font-normal tracking-normal";
@@ -710,13 +711,27 @@ function MarginRuleEditPanel({
                 <label className="text-[11px] text-zinc-600 block">
                   Charge code (Braiin canonical)
                 </label>
-                <input
-                  type="text"
+                <select
                   value={working.chargeCode ?? ""}
                   onChange={(e) => setOptional("chargeCode", e.target.value)}
-                  placeholder="(any)"
                   className="w-full h-9 px-2 rounded border border-zinc-300 text-sm font-mono bg-white"
-                />
+                >
+                  <option value="">(any)</option>
+                  {CHARGE_CODES.filter(
+                    (c) => !working.macroGroup || c.macroGroup === working.macroGroup,
+                  )
+                    .sort((a, b) => a.braiinCode.localeCompare(b.braiinCode))
+                    .map((c) => (
+                      <option key={c.braiinCode} value={c.braiinCode}>
+                        {c.braiinCode}
+                      </option>
+                    ))}
+                </select>
+                <div className="text-[10px] text-zinc-400">
+                  {working.macroGroup
+                    ? `Filtered to ${MACRO_LABEL[working.macroGroup]} codes`
+                    : "Pick a Section above to narrow this list"}
+                </div>
               </div>
             </div>
           </div>
@@ -1520,13 +1535,22 @@ function TestCalculatorPanel({ open, onClose, rules }: TestCalculatorProps) {
               </div>
               <div>
                 <label className="text-[11px] text-zinc-600 block">Charge code</label>
-                <input
-                  type="text"
+                <select
                   value={t.chargeCode}
                   onChange={(e) => update("chargeCode", e.target.value)}
-                  placeholder="(any)"
                   className="w-full h-8 px-2 rounded border border-zinc-300 text-xs font-mono bg-white"
-                />
+                >
+                  <option value="">(any)</option>
+                  {CHARGE_CODES.filter(
+                    (c) => !t.macroGroup || c.macroGroup === t.macroGroup,
+                  )
+                    .sort((a, b) => a.braiinCode.localeCompare(b.braiinCode))
+                    .map((c) => (
+                      <option key={c.braiinCode} value={c.braiinCode}>
+                        {c.braiinCode}
+                      </option>
+                    ))}
+                </select>
               </div>
               <div>
                 <label className="text-[11px] text-zinc-600 block">Sample cost</label>
