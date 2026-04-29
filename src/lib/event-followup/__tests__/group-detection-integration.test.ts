@@ -172,6 +172,16 @@ vi.mock("@/services/base", () => {
         };
       });
 
+      chain.upsert = vi.fn((payload: unknown, _opts?: unknown) => {
+        supabaseCalls.push({ table, method: "upsert", payload });
+        const id = nextGroupId++;
+        return {
+          select: (_cols: string) => ({
+            single: () => resolved({ id }, null),
+          }),
+        };
+      });
+
       chain.update = vi.fn((payload: unknown) => {
         supabaseCalls.push({ table, method: "update", payload });
         return {
@@ -338,15 +348,15 @@ describe("runGroupDetection (integration via importEventContacts)", () => {
     // All 3 Acme members should be tagged.
     expect(result.groups.members_tagged).toBe(3);
 
-    // company_groups insert should have occurred.
-    const groupInserts = supabaseCalls.filter(
-      (c) => c.table === "company_groups" && c.method === "insert",
+    // company_groups upsert should have occurred (race-safe path).
+    const groupUpserts = supabaseCalls.filter(
+      (c) => c.table === "company_groups" && c.method === "upsert",
     );
-    expect(groupInserts).toHaveLength(1);
+    expect(groupUpserts).toHaveLength(1);
 
     // The detected lead should be id=101 (highest seniority_score=80 among Acme).
-    const groupInsertPayload = groupInserts[0].payload as Record<string, unknown>;
-    expect(groupInsertPayload.lead_contact_id).toBe(101);
+    const groupUpsertPayload = groupUpserts[0].payload as Record<string, unknown>;
+    expect(groupUpsertPayload.lead_contact_id).toBe(101);
 
     // event_contacts update should set contact_role='to' for lead.
     const contactRoleToUpdates = supabaseCalls.filter(
