@@ -4,6 +4,10 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### Dev menu in the sidebar
+
+- **`src/components/dev-menu.tsx`** - sidebar flyout listing every `/dev/*` page grouped by purpose (Quoting engine / TMS + integrations / Founder surface). Click the Code icon at the bottom of the sidebar to open the panel; click outside, hit Escape, or navigate to close. Active page is highlighted with a violet left-border + tinted background. Each entry shows the page-header icon for visual continuity. Pinned at the bottom of `SidebarNav` under a thin divider so it never competes with the main nav.
+
 ### Security hardening - post-audit fixes (2026-04-29)
 
 - **Em-dash sweep across the dashboard.** Removed the remaining em-dash and en-dash characters from `margins`, `quote-inbox`, `quote-preview`, and `config/customer.ts` to comply with the project-wide rule of standard hyphens only. Also captured a regression check via the new security dashboard.

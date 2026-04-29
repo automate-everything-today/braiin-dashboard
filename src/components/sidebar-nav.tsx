@@ -6,6 +6,7 @@ import {
   TrendingUp, Brain, Users, Lightbulb, Target,
   Sparkles, Phone, LayoutDashboard, Activity, BarChart3, Trophy, UserCog, Shield, Settings, Kanban, CheckSquare, Mail, MessageSquare, AlertTriangle, GitBranch, Globe,
 } from "lucide-react";
+import { DevMenu } from "@/components/dev-menu";
 
 const nav = [
   { href: "/pipeline", label: "Pipeline", icon: Kanban },
@@ -58,6 +59,9 @@ export function SidebarNav() {
           </Link>
         );
       })}
+      <div className="mt-auto flex flex-col items-center gap-1 pt-2 border-t border-white/10 w-full">
+        <DevMenu />
+      </div>
     </nav>
   );
 }
