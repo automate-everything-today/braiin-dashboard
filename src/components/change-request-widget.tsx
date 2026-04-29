@@ -105,8 +105,11 @@ export function ChangeRequestWidget() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          // Full URL (host + path + search + hash) so the CTO can
+          // jump straight to the exact context the request was raised
+          // from. Falls back to pathname server-side.
           source_page:
-            typeof window !== "undefined" ? window.location.pathname : "unknown",
+            typeof window !== "undefined" ? window.location.href : "unknown",
           title: title.trim(),
           description: description.trim(),
           priority,
@@ -164,12 +167,13 @@ export function ChangeRequestWidget() {
                   Suggest a change
                 </div>
                 <div className="font-medium">What should we build / fix?</div>
-                <div className="text-[11px] text-zinc-500 mt-1">
-                  From{" "}
-                  <span className="font-mono">
-                    {typeof window !== "undefined" ? window.location.pathname : ""}
-                  </span>{" "}
-                  · paste a screenshot with Cmd+V or use the paperclip below.
+                <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
+                  Page captured:{" "}
+                  <span className="font-mono text-zinc-700 break-all">
+                    {typeof window !== "undefined" ? window.location.href : ""}
+                  </span>
+                  <br />
+                  Paste a screenshot with Cmd+V or use the paperclip below.
                 </div>
               </div>
               <button
