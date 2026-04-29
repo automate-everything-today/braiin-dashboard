@@ -35,6 +35,7 @@ import {
   Mail,
   CheckCircle2,
   AlertCircle,
+  ExternalLink,
 } from "lucide-react";
 
 interface EventSummary {
@@ -58,6 +59,7 @@ interface ContactRow {
   meeting_notes: string | null;
   company_info: string | null;
   follow_up_status: string;
+  attention_reason: string | null;
   draft_subject: string | null;
   draft_body: string | null;
   send_from_email: string | null;
@@ -154,12 +156,14 @@ function Inner() {
   const [events, setEvents] = useState<EventSummary[] | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
   const [contacts, setContacts] = useState<ContactRow[] | null>(null);
+  const [needsAttentionAll, setNeedsAttentionAll] = useState<ContactRow[] | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionResult, setActionResult] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [view, setView] = useState<"active" | "needs_attention">("active");
 
   async function loadEvents() {
     try {
@@ -196,8 +200,21 @@ function Inner() {
     }
   }
 
+  async function loadNeedsAttention() {
+    try {
+      const res = await fetch("/api/event-followup/contacts?status=needs_attention");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load needs-attention contacts");
+      setNeedsAttentionAll(data.contacts || []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load needs-attention contacts");
+      setNeedsAttentionAll([]);
+    }
+  }
+
   useEffect(() => {
     loadEvents();
+    loadNeedsAttention();
   }, []);
 
   useEffect(() => {
@@ -208,6 +225,7 @@ function Inner() {
     if (!contacts) return [];
     const q = search.toLowerCase().trim();
     return contacts
+      .filter((c) => c.follow_up_status !== "needs_attention")
       .filter((c) =>
         statusFilter === "all" ? true : c.follow_up_status === statusFilter,
       )
@@ -226,6 +244,16 @@ function Inner() {
         return (a.name ?? "").localeCompare(b.name ?? "");
       });
   }, [contacts, statusFilter, search]);
+
+  const needsAttentionContacts = useMemo(() => {
+    if (!needsAttentionAll) return [];
+    return [...needsAttentionAll].sort((a, b) => {
+      const ra = a.attention_reason ?? "";
+      const rb = b.attention_reason ?? "";
+      if (ra !== rb) return ra.localeCompare(rb);
+      return (a.name ?? a.email).localeCompare(b.name ?? b.email);
+    });
+  }, [needsAttentionAll]);
 
   async function runAction(label: string, fn: () => Promise<void>) {
     setBusyAction(label);
@@ -249,13 +277,19 @@ function Inner() {
 
       // Build a richer summary so 0-imported runs explain themselves.
       const parts: string[] = [
-        `Imported ${r.imported} contacts (${r.fetched} fetched, ${r.skipped} skipped).`,
+        `Imported ${r.imported} contacts (${r.fetched} fetched).`,
       ];
-      if (r.skip_reasons && Object.keys(r.skip_reasons).length > 0) {
-        const reasonStr = Object.entries(r.skip_reasons as Record<string, number>)
-          .map(([reason, count]) => `${count} ${reason}`)
-          .join(", ");
-        parts.push(`Skip reasons: ${reasonStr}.`);
+      if (r.needs_attention > 0) {
+        parts.push(`${r.needs_attention} need attention (missing email or event).`);
+      }
+      if (r.imported_event_ids && r.imported_event_ids.length > 0) {
+        parts.push(`Events updated: ${r.imported_event_ids.length}.`);
+      }
+      if (data.granola) {
+        const g = data.granola;
+        if (g.ingested_meetings > 0) {
+          parts.push(`Granola: ${g.ingested_meetings} meetings ingested, ${g.auto_linked} auto-linked.`);
+        }
       }
       if (r.errors && r.errors.length > 0) {
         parts.push(`Errors: ${r.errors.slice(0, 3).join("; ")}${r.errors.length > 3 ? ` (+${r.errors.length - 3} more)` : ""}`);
@@ -263,6 +297,7 @@ function Inner() {
       setActionResult(parts.join(" "));
 
       await loadEvents();
+      await loadNeedsAttention();
       if (selectedEventId) await loadContacts(selectedEventId);
     });
   }
@@ -477,12 +512,90 @@ function Inner() {
         <Button
           size="sm"
           variant="outline"
-          onClick={() => selectedEventId && loadContacts(selectedEventId)}
+          onClick={() => {
+            loadNeedsAttention();
+            if (selectedEventId) loadContacts(selectedEventId);
+          }}
         >
           <RefreshCw className="h-4 w-4 mr-1" /> Reload
         </Button>
       </div>
 
+      {/* View toggle: Active vs Needs attention */}
+      <div className="flex items-center gap-1 border rounded-md w-fit p-1 bg-zinc-50">
+        <Button
+          size="sm"
+          variant={view === "active" ? "default" : "ghost"}
+          onClick={() => setView("active")}
+          className="h-7 px-3 text-xs"
+        >
+          Active
+          {contacts !== null && filtered.length > 0 && (
+            <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${view === "active" ? "bg-white/20" : "bg-zinc-200 text-zinc-600"}`}>
+              {filtered.length}
+            </span>
+          )}
+        </Button>
+        <Button
+          size="sm"
+          variant={view === "needs_attention" ? "default" : "ghost"}
+          onClick={() => setView("needs_attention")}
+          className="h-7 px-3 text-xs"
+        >
+          Needs attention
+          {contacts !== null && needsAttentionContacts.length > 0 && (
+            <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${view === "needs_attention" ? "bg-white/20" : "bg-amber-100 text-amber-700"}`}>
+              {needsAttentionContacts.length}
+            </span>
+          )}
+        </Button>
+      </div>
+
+      {view === "needs_attention" ? (
+        <NeedsAttentionView
+          contacts={needsAttentionContacts}
+          events={events ?? []}
+          busyAction={busyAction}
+          onAssignEvent={async (contactId, eventId) => {
+            return runAction(`assign-event-${contactId}`, async () => {
+              const res = await fetch("/api/event-followup/contacts", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  id: contactId,
+                  event_id: eventId,
+                  follow_up_status: "pending",
+                  attention_reason: null,
+                }),
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || "Assign failed");
+              setActionResult("Contact assigned to event.");
+              await loadNeedsAttention();
+              if (selectedEventId) await loadContacts(selectedEventId);
+              await loadEvents();
+            });
+          }}
+          onMarkJunk={async (contactId) => {
+            return runAction(`junk-${contactId}`, async () => {
+              const res = await fetch("/api/event-followup/contacts", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  id: contactId,
+                  follow_up_status: "cancelled",
+                }),
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || "Mark junk failed");
+              setActionResult("Contact marked as cancelled.");
+              await loadNeedsAttention();
+            });
+          }}
+          loading={needsAttentionAll === null}
+        />
+      ) : (
+        <>
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-md">
           <Search className="h-4 w-4 absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400" />
@@ -719,6 +832,229 @@ function Inner() {
           )}
         </CardContent>
       </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---- Needs-attention pile ----
+
+const ATTENTION_REASON_LABELS: Record<string, string> = {
+  no_event: "No event",
+  no_email: "No email",
+};
+
+function attentionReasonLabel(reason: string | null): string {
+  if (!reason) return "Unknown";
+  // unmapped_event:<name> pattern
+  if (reason.startsWith("unmapped_event:")) {
+    const name = reason.slice("unmapped_event:".length);
+    return `Unmapped event: ${name}`;
+  }
+  return ATTENTION_REASON_LABELS[reason] ?? reason;
+}
+
+function attentionReasonBadgeClass(reason: string | null): string {
+  if (!reason) return "bg-zinc-100 text-zinc-600";
+  if (reason === "no_event" || reason.startsWith("unmapped_event:"))
+    return "bg-amber-100 text-amber-800";
+  if (reason === "no_email") return "bg-red-100 text-red-700";
+  return "bg-zinc-100 text-zinc-600";
+}
+
+function NeedsAttentionView({
+  contacts,
+  events,
+  busyAction,
+  onAssignEvent,
+  onMarkJunk,
+  loading,
+}: {
+  contacts: ContactRow[];
+  events: EventSummary[];
+  busyAction: string | null;
+  onAssignEvent: (contactId: number, eventId: number) => Promise<void>;
+  onMarkJunk: (contactId: number) => Promise<void>;
+  loading: boolean;
+}) {
+  // Count by reason for the summary badges
+  const reasonCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const c of contacts) {
+      const r = c.attention_reason ?? "unknown";
+      counts[r] = (counts[r] ?? 0) + 1;
+    }
+    return counts;
+  }, [contacts]);
+
+  if (loading) {
+    return (
+      <div className="p-12 flex items-center justify-center">
+        <BraiinLoader />
+      </div>
+    );
+  }
+
+  if (contacts.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-6 text-center text-sm text-zinc-500">
+          No contacts need attention. Import from Airtable to surface any with missing email or event.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Summary badges */}
+      <div className="flex flex-wrap gap-2 text-xs text-zinc-600">
+        {Object.entries(reasonCounts).map(([reason, count]) => (
+          <span
+            key={reason}
+            className={`px-2 py-1 rounded-full font-medium ${attentionReasonBadgeClass(reason)}`}
+          >
+            {count} {attentionReasonLabel(reason)}
+          </span>
+        ))}
+      </div>
+
+      <Card>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-44">Name</TableHead>
+                <TableHead>Company</TableHead>
+                <TableHead className="w-52">Email</TableHead>
+                <TableHead className="w-52">Reason</TableHead>
+                <TableHead className="w-56 text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {contacts.map((c) => {
+                const displayName = toProperCase(c.name ?? c.email);
+                const displayCompany = c.company ? toProperCase(c.company) : null;
+                const isSynthesisedEmail = c.email.startsWith("noemail+");
+                const reason = c.attention_reason ?? null;
+                const needsEvent =
+                  reason === "no_event" || (reason?.startsWith("unmapped_event:") ?? false);
+                const needsEmail = reason === "no_email";
+
+                return (
+                  <TableRow key={c.id}>
+                    <TableCell className="font-medium align-top max-w-[12rem]">
+                      <div className="truncate" title={displayName}>
+                        {displayName}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm align-top max-w-[14rem]">
+                      <div className="truncate" title={displayCompany ?? ""}>
+                        {displayCompany ?? "-"}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-xs align-top max-w-[13rem]">
+                      {isSynthesisedEmail ? (
+                        <span className="text-zinc-400 italic">(missing)</span>
+                      ) : (
+                        <span className="truncate block" title={c.email}>
+                          {c.email}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="align-top">
+                      <span
+                        className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium ${attentionReasonBadgeClass(reason)}`}
+                      >
+                        {attentionReasonLabel(reason)}
+                      </span>
+                    </TableCell>
+                    <TableCell className="align-top text-right">
+                      <div className="flex justify-end items-center gap-2">
+                        {needsEvent && (
+                          <EventAssignDropdown
+                            contactId={c.id}
+                            events={events}
+                            busy={busyAction === `assign-event-${c.id}`}
+                            onAssign={onAssignEvent}
+                          />
+                        )}
+                        {needsEmail && (
+                          <>
+                            <a
+                              href="https://airtable.com"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 underline"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              Edit in Airtable
+                            </a>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              disabled={busyAction === `junk-${c.id}`}
+                              onClick={() => onMarkJunk(c.id)}
+                            >
+                              {busyAction === `junk-${c.id}` ? "..." : "Mark junk"}
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function EventAssignDropdown({
+  contactId,
+  events,
+  busy,
+  onAssign,
+}: {
+  contactId: number;
+  events: EventSummary[];
+  busy: boolean;
+  onAssign: (contactId: number, eventId: number) => Promise<void>;
+}) {
+  const [selectedEventId, setSelectedEventId] = useState<string>("");
+
+  return (
+    <div className="flex items-center gap-1">
+      <select
+        value={selectedEventId}
+        onChange={(e) => setSelectedEventId(e.target.value)}
+        className="px-2 py-1 text-xs border rounded-md bg-white max-w-[140px]"
+        disabled={busy}
+      >
+        <option value="">Pick event...</option>
+        {events.map((e) => (
+          <option key={e.event_id} value={String(e.event_id)}>
+            {e.event_name}
+          </option>
+        ))}
+      </select>
+      <Button
+        size="sm"
+        className="h-7 text-xs"
+        disabled={!selectedEventId || busy}
+        onClick={() => {
+          if (selectedEventId) {
+            onAssign(contactId, Number(selectedEventId));
+          }
+        }}
+      >
+        {busy ? "..." : "Assign"}
+      </Button>
     </div>
   );
 }
