@@ -52,6 +52,10 @@ export interface DraftInput {
   rep_first_name: string;
   /** ISO list of any other reps to CC (Internal CC routing). */
   cc_emails: string[];
+  /** Operator feedback on a previous draft - if present, LLM gets the
+   *  previous_draft + this instruction and rewrites. */
+  feedback: string | null;
+  previous_draft: string | null;
 }
 
 export interface DraftOutput {
@@ -129,37 +133,80 @@ function repVoice(repEmail: string): string {
  * to ship fast and iterate the prompt against real drafts.
  */
 const CORTEN_COMPANY_BRIEF = `
-ABOUT CORTEN (apply to every draft):
+ABOUT CORTEN LOGISTICS (apply to every draft):
 
-Corten Logistics is a UK-based freight forwarder. Headquartered in London.
+WHO WE ARE:
+- UK-based independent freight forwarder. HQ in London (registered office:
+  Unit W106, The Windsor Centre, 15-29 Windsor Street, London N1 8QG).
+- Founded 2009 by Rob Donald and Sam Yauner. Started by trading shipping
+  containers; clients kept asking "can you ship them as well?" and the
+  forwarding business grew from there.
+- Sunday Times 100 Fastest Growing Companies (recent recognition).
+- Tagline: #WeGetShipDone. Pitch: "Helping high-growth brands simplify
+  global logistics."
+- Founding principles: Be genuine. Stay agile. Act with honesty. (Use these
+  as voice guides, not slogans to quote.)
+
+WHO WE SERVE:
+- High-growth brands, including household-name consumer brands. Long-term
+  customer relationships - some clients have been with us 10+ years.
+- Sweet spot: brands who need a forwarder that responds fast and actually
+  knows their lanes, not a faceless multinational.
 
 GEOGRAPHIC SCOPE (critical - the LLM gets this wrong by default):
-- Our primary lane shape is "UK <-> anywhere" plus Ireland inbound/outbound.
-- We do NOT focus only on the country where a trade show happened. Meeting a
-  contact at Intermodal South America does NOT mean we only want Brazil
-  business with them.
-- When writing to a contact in country X, the relevant pitch is:
-  (a) UK <-> X direct flows (our home turf)
-  (b) X <-> third-country flows routed via the UK (we can handle those too)
-  (c) Any inbound to UK / Ireland from any origin (we always want this)
-- We do NOT do domestic-only flows entirely outside the UK (e.g., we don't
-  move boxes Brazil <-> Brazil). Don't pitch that.
+- Primary lane shape: "UK <-> anywhere" plus Ireland inbound/outbound.
+- We do NOT focus only on the country where a trade show happened. Meeting
+  a contact at Intermodal South America does NOT mean we only want Brazil
+  business. Meeting at GKF Summit does NOT mean we only want LATAM.
+- When writing to a contact in country X, the relevant pitch is one of:
+  (a) UK <-> X direct flows (our core)
+  (b) X <-> third-country flows routed via the UK
+  (c) Inbound to UK / Ireland from any origin (we always want this)
+- We do NOT do domestic-only flows entirely outside the UK (no Brazil <->
+  Brazil, no Mexico <-> Mexico). Don't pitch those.
 
 SERVICES:
-- Ocean (FCL + LCL), Air, Road / Customs / Warehousing.
-- Reefer-capable. Project cargo. eCommerce (UK fulfilment for inbound flows).
+- Ocean (FCL + LCL), Air, Road, Rail. Real-time tracking. Full compliance.
+- Reefer-capable. Project cargo. eCommerce-friendly (UK fulfilment for
+  inbound consumer flows).
+- Contracted stable rates from Asia for high-volume clients - this is a
+  genuine differentiator worth surfacing for any Asia-origin pitch.
+- Tech-forward: in-house systems for tracking and reporting. Sam's words:
+  "tech that will make your IT department green with envy."
 
-TONE / POSITIONING:
-- Independent forwarder, agent-network model (WCA + GKF/ULN members).
-- We win on responsiveness and lane-specific knowledge, not on global scale.
-- Reciprocal: we always ask what we can refer back to the contact's network.
+POSITIONING:
+- Independent agent-network model. WCA member. GKF/ULN Network member.
+- We win on responsiveness, lane-specific expertise, and a stable team -
+  not on global scale.
+- Reciprocal partnerships: we always ask what we can refer back to the
+  contact's network or country.
+- "Award-winning freight management" - real recognition, not marketing
+  fluff.
 
-WHEN WRITING:
-- Anchor the value prop in the contact's country and what UK <-> [their country] flow they likely have.
-- Never assume the trade-show country defines the trade lane.
-- Reference specific UK ports / airports where it strengthens the pitch
-  (Felixstowe, Southampton, London Heathrow, London Gateway, Liverpool,
-  Belfast, Dublin) - but only if the lane fits.
+NETWORKS / EVENTS WE ATTEND:
+- WCA World (host us at trade shows like Intermodal South America)
+- GKF/ULN Network (annual GKF Summit)
+- Both summits ran in Sao Paulo April 2026 - that's where we met all the
+  Intermodal/GKF cohort contacts.
+
+UK INFRASTRUCTURE TO REFERENCE WHEN RELEVANT:
+- Sea ports: Felixstowe, Southampton, London Gateway, Liverpool, Tilbury.
+- Air gateways: London Heathrow (LHR), London Gatwick (LGW), Manchester (MAN), East Midlands (EMA).
+- Ireland: Dublin, Belfast.
+- Use these only when the lane actually involves them; don't drop names
+  for flavour.
+
+WHAT WE'RE NOT:
+- Not a multinational. Not a software-only platform. Not a digital
+  forwarder selling pure self-service. Not a one-stop-shop pitching every
+  service to every contact. Not a "global reach + local expertise"
+  forwarder - that's a banned phrase.
+
+VOICE EXTRAS:
+- Brand colour is coral/pink. Conference giveaways: branded fans, socks,
+  pink sunglasses, Craigellachie whisky. Don't reference these in cold
+  follow-ups, but if a contact mentions the fan club, lean in - it's a
+  signature touchpoint.
 `;
 
 const META_RULES = `
@@ -306,6 +353,19 @@ function buildUserPrompt(input: DraftInput): string {
 
   lines.push(tierGuidance);
   lines.push("");
+
+  if (input.previous_draft && input.feedback) {
+    lines.push("=== REVISION REQUEST ===");
+    lines.push("Previous draft (the one to revise):");
+    lines.push(input.previous_draft);
+    lines.push("");
+    lines.push("Operator feedback on the previous draft (apply this faithfully):");
+    lines.push(input.feedback);
+    lines.push("");
+    lines.push("Rewrite the email taking the feedback above into account. Keep what worked, change what the operator flagged. Output the FULL new email as JSON.");
+    lines.push("");
+  }
+
   lines.push(`Write the email as ${input.rep_first_name} (signing off with first name only).`);
   lines.push("Output JSON only - no preamble, no markdown.");
   return lines.join("\n");

@@ -33,6 +33,11 @@ const patchSchema = z.object({
   draft_body: z.string().max(20000).optional(),
   follow_up_status: z.enum(STATUSES).optional(),
   send_from_email: z.string().email().optional(),
+  met_by: z.array(z.string()).max(10).optional(),
+  meeting_notes: z.string().max(5000).nullable().optional(),
+  company_info: z.string().max(5000).nullable().optional(),
+  title: z.string().max(200).nullable().optional(),
+  company_type: z.string().max(100).nullable().optional(),
   tier: z.number().int().min(1).max(5).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
 });
@@ -50,7 +55,7 @@ export async function GET(req: Request) {
     supabase
       .from("event_contacts")
       .select(
-        "id, email, name, company, country, region, tier, met_by, follow_up_status, draft_subject, draft_body, send_from_email, engagement_summary, last_inbound_at, sent_at, sent_message_id, replied_at, bounced_at, bounce_reason, event_id",
+        "id, email, name, title, company, company_type, country, region, tier, met_by, meeting_notes, company_info, follow_up_status, draft_subject, draft_body, send_from_email, engagement_summary, last_inbound_at, sent_at, sent_message_id, replied_at, bounced_at, bounce_reason, event_id",
       )
       .eq("event_id", eventId)
       .order("tier", { ascending: true, nullsFirst: false })
@@ -85,6 +90,11 @@ export async function PATCH(req: Request) {
   if (updates.draft_body !== undefined) payload.draft_body = updates.draft_body;
   if (updates.follow_up_status !== undefined) payload.follow_up_status = updates.follow_up_status;
   if (updates.send_from_email !== undefined) payload.send_from_email = updates.send_from_email;
+  if (updates.met_by !== undefined) payload.met_by = updates.met_by;
+  if (updates.meeting_notes !== undefined) payload.meeting_notes = updates.meeting_notes;
+  if (updates.company_info !== undefined) payload.company_info = updates.company_info;
+  if (updates.title !== undefined) payload.title = updates.title;
+  if (updates.company_type !== undefined) payload.company_type = updates.company_type;
   if (updates.tier !== undefined) payload.tier = updates.tier;
   if (Object.keys(payload).length === 0) return apiError("No fields to update", 400);
 

@@ -24,6 +24,11 @@ const ROUTE = "/api/event-followup/draft";
 const singleSchema = z.object({
   contact_id: z.number().int().positive(),
   force: z.boolean().optional().default(false),
+  /** Operator feedback on the previous draft. When set, the LLM gets the
+   *  previous draft + this feedback in the prompt and rewrites accordingly.
+   *  e.g. "make it shorter, mention Brazil reefer specifically". */
+  feedback: z.string().max(2000).optional(),
+  previous_draft: z.string().max(20000).optional(),
 });
 
 const batchSchema = z.object({
@@ -125,7 +130,12 @@ async function loadContact(contactId: number): Promise<ContactRow | null> {
   };
 }
 
-async function draftOne(contactId: number, force: boolean): Promise<{
+async function draftOne(
+  contactId: number,
+  force: boolean,
+  feedback?: string,
+  previousDraft?: string,
+): Promise<{
   contact_id: number;
   status: "drafted" | "skipped" | "error";
   message?: string;
@@ -172,6 +182,8 @@ async function draftOne(contactId: number, force: boolean): Promise<{
     rep_email: repEmail,
     rep_first_name: repFirstName,
     cc_emails: ccEmails,
+    feedback: feedback ?? null,
+    previous_draft: previousDraft ?? null,
   };
 
   const draft = await generateDraft(input);
@@ -205,7 +217,12 @@ export async function POST(req: Request) {
   const single = singleSchema.safeParse(body);
   if (single.success) {
     try {
-      const result = await draftOne(single.data.contact_id, single.data.force);
+      const result = await draftOne(
+        single.data.contact_id,
+        single.data.force,
+        single.data.feedback,
+        single.data.previous_draft,
+      );
       return apiResponse({ result });
     } catch (e) {
       return apiError(e instanceof Error ? e.message : "Draft failed", 500);
