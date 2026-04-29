@@ -59,12 +59,34 @@ export async function POST(req: Request) {
   if (updates.attention_reason !== undefined) payload.attention_reason = updates.attention_reason;
   if (updates.tier !== undefined) payload.tier = updates.tier;
 
-  const { data, error, count } = await supabase
-    .from("event_contacts")
-    .update(payload, { count: "exact" })
-    .in("id", ids)
-    .select("id");
+  // Per-row updates so unique-constraint collisions on (email, event_id)
+  // (e.g. two Airtable contacts sharing an info@company.com mailbox both
+  // targeted at the same event) only fail the offending row, not the whole
+  // batch. Postgres rejects a whole UPDATE...IN if any row would violate.
+  const updatedIds: number[] = [];
+  const failed: Array<{ id: number; reason: string }> = [];
 
-  if (error) return apiError(error.message, 500);
-  return apiResponse({ updated: count ?? data?.length ?? 0, ids: data?.map((r) => r.id) ?? [] });
+  for (const id of ids) {
+    const { error } = await supabase
+      .from("event_contacts")
+      .update(payload)
+      .eq("id", id);
+    if (error) {
+      failed.push({
+        id,
+        reason: error.message.includes("event_contacts_email_event_uniq")
+          ? "Email already used at this event (likely a colleague at the same company)"
+          : error.message,
+      });
+    } else {
+      updatedIds.push(id);
+    }
+  }
+
+  return apiResponse({
+    updated: updatedIds.length,
+    failed_count: failed.length,
+    failed,
+    ids: updatedIds,
+  });
 }

@@ -606,7 +606,18 @@ function Inner() {
               });
               const data = await res.json();
               if (!res.ok) throw new Error(data.error || "Bulk assign failed");
-              setActionResult(`Assigned ${data.updated} contacts to event.`);
+              const failedCount = data.failed_count ?? 0;
+              if (failedCount > 0) {
+                const reasons = (data.failed as Array<{ id: number; reason: string }> | undefined)
+                  ?.slice(0, 3)
+                  .map((f) => `#${f.id}: ${f.reason}`)
+                  .join("; ");
+                setActionResult(
+                  `Assigned ${data.updated} contacts. ${failedCount} failed${reasons ? ` (${reasons}${failedCount > 3 ? `, +${failedCount - 3} more` : ""})` : ""}.`,
+                );
+              } else {
+                setActionResult(`Assigned ${data.updated} contacts to event.`);
+              }
               await loadNeedsAttention();
               if (selectedEventId) await loadContacts(selectedEventId);
               await loadEvents();
@@ -624,7 +635,12 @@ function Inner() {
               });
               const data = await res.json();
               if (!res.ok) throw new Error(data.error || "Bulk mark junk failed");
-              setActionResult(`Marked ${data.updated} contacts as cancelled.`);
+              const failedCount = data.failed_count ?? 0;
+              setActionResult(
+                failedCount > 0
+                  ? `Marked ${data.updated} as cancelled. ${failedCount} failed.`
+                  : `Marked ${data.updated} contacts as cancelled.`,
+              );
               await loadNeedsAttention();
             });
           }}
@@ -931,6 +947,8 @@ function NeedsAttentionView({
   // Multi-select state for bulk operations.
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkEventId, setBulkEventId] = useState<string>("");
+  // Anchor for shift-click range selection (last individually-clicked row).
+  const [lastClickedId, setLastClickedId] = useState<number | null>(null);
 
   // Reset selection if the contact list changes underneath us (e.g. after a refresh).
   useEffect(() => {
@@ -950,13 +968,39 @@ function NeedsAttentionView({
     if (allSelected) setSelectedIds(new Set());
     else setSelectedIds(new Set(visibleIds));
   };
-  const toggleOne = (id: number) => {
+  // Click handler supports shift-click range selection. If shiftKey is held
+  // and there's a previous anchor, toggle every row between the anchor and
+  // the current row to MATCH the current row's new state.
+  const handleRowCheckboxClick = (id: number, e: React.MouseEvent<HTMLInputElement>) => {
+    const shift = e.shiftKey;
+    if (shift && lastClickedId !== null && lastClickedId !== id) {
+      const startIdx = visibleIds.indexOf(lastClickedId);
+      const endIdx = visibleIds.indexOf(id);
+      if (startIdx !== -1 && endIdx !== -1) {
+        const [from, to] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+        const range = visibleIds.slice(from, to + 1);
+        // Direction of toggle = opposite of current state for `id` BEFORE this click.
+        // After this click, `id` will flip; we want the rest of the range to match.
+        const willBeSelected = !selectedIds.has(id);
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          for (const rangeId of range) {
+            if (willBeSelected) next.add(rangeId);
+            else next.delete(rangeId);
+          }
+          return next;
+        });
+        setLastClickedId(id);
+        return;
+      }
+    }
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+    setLastClickedId(id);
   };
 
   const bulkBusy =
@@ -1106,9 +1150,11 @@ function NeedsAttentionView({
                       <input
                         type="checkbox"
                         checked={selectedIds.has(c.id)}
-                        onChange={() => toggleOne(c.id)}
+                        onClick={(e) => handleRowCheckboxClick(c.id, e)}
+                        onChange={() => { /* handled by onClick to access shiftKey */ }}
                         className="cursor-pointer"
                         aria-label={`Select ${displayName}`}
+                        title="Shift-click to select range"
                       />
                     </TableCell>
                     <TableCell className="font-medium align-top max-w-[12rem]">
