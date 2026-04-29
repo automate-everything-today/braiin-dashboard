@@ -18,10 +18,12 @@
  * not wired in this iteration.
  */
 
+import { randomUUID } from "node:crypto";
 import { supabase } from "@/services/base";
 import { requireAuth, requireManager } from "@/lib/api-auth";
 import { apiError, apiResponse } from "@/lib/validation";
 import { importEventContacts } from "@/lib/airtable/event-contacts";
+import { loadRulesSnapshot } from "@/lib/system-rules/load";
 
 const ROUTE = "/api/event-followup/import";
 
@@ -80,9 +82,19 @@ export async function POST(req: Request) {
   const auth = await requireManager(ROUTE, req);
   if (!auth.ok) return auth.response;
 
+  const runId = randomUUID();
+
+  let snapshot;
   try {
-    const result = await importEventContacts();
-    return apiResponse({ result });
+    snapshot = await loadRulesSnapshot();
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Failed to load system_rules";
+    return apiError(`Cannot run import: ${msg}`, 500);
+  }
+
+  try {
+    const result = await importEventContacts({ runId, snapshot });
+    return apiResponse({ result, run_id: runId });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Import failed";
     return apiError(msg, 500);
