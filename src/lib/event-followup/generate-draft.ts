@@ -24,6 +24,9 @@ import { complete } from "@/lib/llm-gateway";
 import { lintDraft, recordCatches } from "@/lib/voice/lint";
 import { supabase } from "@/services/base";
 import type { Channel, LintHit } from "@/lib/voice/types";
+import { renderBaselineTemplate } from "@/lib/event-followup/baseline-template";
+import { loadRulesSnapshot } from "@/lib/system-rules/load";
+import type { RulesSnapshot } from "@/lib/system-rules/types";
 
 const DRAFT_MODEL = "claude-sonnet-4-6";
 const MAX_REGENERATE_RETRIES = 2;
@@ -56,6 +59,12 @@ export interface DraftInput {
    *  previous_draft + this instruction and rewrites. */
   feedback: string | null;
   previous_draft: string | null;
+  /** Granola transcript bodies linked to this contact. Empty or undefined
+   *  means no transcript context is available. */
+  granola_transcripts?: string[];
+  /** BCP-47 language tag for the output; defaults to "en". Used to select
+   *  the baseline template slot when falling back. */
+  language?: string;
 }
 
 export interface DraftOutput {
@@ -67,6 +76,9 @@ export interface DraftOutput {
   regenerations: number;
   /** Final lint state - useful for telemetry. */
   rules_checked: number;
+  /** What data sources fed this draft. Used to render badges on the dashboard.
+   *  E.g. ["baseline_template"], ["airtable_notes", "granola_transcript"]. */
+  data_source_tags: string[];
 }
 
 /**
@@ -406,11 +418,79 @@ function buildRegenerateNote(blocks: LintHit[]): string {
   return `\n\nYour previous draft contained banned content. Fix these and regenerate the JSON:\n${items}`;
 }
 
-export async function generateDraft(input: DraftInput): Promise<DraftOutput> {
+export async function generateDraft(
+  input: DraftInput,
+  snapshot?: RulesSnapshot,
+): Promise<DraftOutput> {
+  // Resolve snapshot - callers that already have one can pass it to avoid a
+  // redundant DB round-trip; callers that don't get one loaded automatically
+  // (back-compat with any existing callers that omit the second argument).
+  const resolvedSnapshot = snapshot ?? (await loadRulesSnapshot());
+
+  // --- Baseline case short-circuit ---
+  // When there is no meeting context of any kind, use the deterministic
+  // baseline template instead of paying LLM cost for a content-free draft.
+  const isBaselineCase =
+    !input.meeting_notes &&
+    !input.company_info &&
+    (input.granola_transcripts ?? []).length === 0;
+
+  if (isBaselineCase) {
+    const tierBand =
+      input.tier == null
+        ? "D"
+        : input.tier <= 1
+          ? "A"
+          : input.tier === 2
+            ? "B"
+            : input.tier === 3
+              ? "C"
+              : "D";
+    const language = input.language ?? "en";
+    const slotKey = `${language}:${tierBand}`;
+
+    const tpl = resolvedSnapshot.baselineTemplate(slotKey);
+    if (!tpl) {
+      throw new Error(
+        `No baseline template authored for slot ${slotKey}; operator must run /dev/system-rules questionnaire (per fail-loud rule).`,
+      );
+    }
+
+    const firstName =
+      (input.contact_name ?? input.contact_email).split(/[\s@]/)[0] || "there";
+    const rendered = renderBaselineTemplate(tpl, {
+      first_name: firstName,
+      company: input.company ?? "your company",
+      event_name: input.event_name,
+      rep_first_name: input.rep_first_name,
+      country: input.country,
+    });
+
+    return {
+      subject: rendered.subject,
+      body: rendered.body,
+      warns: [],
+      regenerations: 0,
+      rules_checked: 0,
+      data_source_tags: ["baseline_template"],
+    };
+  }
+
+  // --- Compute data_source_tags for the LLM path ---
+  const dataSrcTags: string[] = [];
+  if (input.meeting_notes) dataSrcTags.push("airtable_notes");
+  if (input.company_info) dataSrcTags.push("airtable_company_info");
+  if ((input.granola_transcripts ?? []).length > 0) dataSrcTags.push("granola_transcript");
+  if (input.previous_draft && input.feedback) dataSrcTags.push("previous_draft_feedback");
+
   const channel: Channel = "email";
   const bansBlock = await buildBansBlock(channel);
   const systemPrompt = buildSystemPrompt(input.rep_email, bansBlock);
   const userPrompt = buildUserPrompt(input);
+
+  // Use snapshot model routing; fall back to the hardcoded constant if the
+  // snapshot returns nothing for this task.
+  const draftModel = resolvedSnapshot.modelFor("draft_email") || DRAFT_MODEL;
 
   let userMessage = userPrompt;
   let regenerations = 0;
@@ -424,7 +504,7 @@ export async function generateDraft(input: DraftInput): Promise<DraftOutput> {
       purpose: "event_followup_draft",
       system: [{ text: systemPrompt, cacheControl: "ephemeral" }],
       user: userMessage,
-      model: DRAFT_MODEL,
+      model: draftModel,
       maxTokens: 1200,
       temperature: 0.4,
     });
@@ -449,6 +529,7 @@ export async function generateDraft(input: DraftInput): Promise<DraftOutput> {
         warns: lint.warns,
         regenerations: attempt,
         rules_checked: lint.rules_checked,
+        data_source_tags: dataSrcTags,
       };
     }
 
@@ -469,5 +550,6 @@ export async function generateDraft(input: DraftInput): Promise<DraftOutput> {
     warns: [...lastBlocks, ...lastWarns],
     regenerations,
     rules_checked: lastRulesChecked,
+    data_source_tags: dataSrcTags,
   };
 }
