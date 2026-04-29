@@ -57,10 +57,16 @@ async function logAction(action: string, payload: Record<string, unknown>): Prom
 
 export async function POST(req: Request) {
   // Path-secret check. The webhook URL contains a secret only we know.
+  // Fail HARD when not configured - never allow unauthenticated execution
+  // of privileged commands. (Audit fix: was previously bypassed if
+  // TELEGRAM_WEBHOOK_SECRET was unset, leaving chat_id-from-body as the
+  // sole gate, which is attacker-controlled.)
   const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
-  const url = new URL(req.url);
   const headerSecret = req.headers.get("x-telegram-bot-api-secret-token");
-  if (expectedSecret && headerSecret !== expectedSecret) {
+  if (!expectedSecret) {
+    return Response.json({ ok: false, error: "Webhook not configured" }, { status: 503 });
+  }
+  if (headerSecret !== expectedSecret) {
     return Response.json({ ok: false, error: "Forbidden" }, { status: 403 });
   }
 
