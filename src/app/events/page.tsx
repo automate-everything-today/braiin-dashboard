@@ -10,13 +10,19 @@
  * Auth: PageGuard (manager+).
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageGuard } from "@/components/page-guard";
 import { BraiinLoader } from "@/components/braiin-loader";
 import { Plus, RefreshCw, ExternalLink, Pencil, X, Save, Trophy } from "lucide-react";
+
+interface MediaRow {
+  id: number;
+  signed_url: string | null;
+  caption: string | null;
+}
 
 type Currency = "GBP" | "USD" | "EUR";
 type EventType = "trade_show" | "conference" | "network_meeting" | "agm" | "other";
@@ -331,6 +337,56 @@ function EditForm({
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Photo uploader state
+  const [media, setMedia] = useState<MediaRow[]>([]);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [caption, setCaption] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function loadMedia() {
+    if (!existing?.id) return;
+    try {
+      const res = await fetch(`/api/event-media?event_id=${existing.id}`);
+      const data = await res.json();
+      if (res.ok) setMedia((data.media ?? []).slice(0, 3));
+    } catch {
+      // non-fatal - media strip just stays empty
+    }
+  }
+
+  useEffect(() => {
+    loadMedia();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existing?.id]);
+
+  async function uploadPhoto() {
+    if (!selectedFile || !existing?.id) return;
+    setUploading(true);
+    setUploadError(null);
+    setUploadSuccess(null);
+    try {
+      const fd = new FormData();
+      fd.append("event_id", String(existing.id));
+      fd.append("file", selectedFile);
+      if (caption.trim()) fd.append("caption", caption.trim());
+      const res = await fetch("/api/event-media", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      setUploadSuccess("Uploaded.");
+      setSelectedFile(null);
+      setCaption("");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      await loadMedia();
+    } catch (e: unknown) {
+      setUploadError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function save() {
     setErr(null);
     if (!name.trim() || !startDate) {
@@ -486,6 +542,61 @@ function EditForm({
           />
         </div>
         {err && <div className="text-sm text-red-700">{err}</div>}
+
+        {existing?.id && (
+          <div className="space-y-3 border-t pt-4">
+            <h4 className="text-sm font-semibold uppercase tracking-wide">Event photos</h4>
+            <p className="text-xs text-zinc-500">
+              Up to 3 images per event are passed to the AI as visual context for draft generation. Max 2MB each.
+            </p>
+            <div className="flex gap-3 flex-wrap">
+              {media.map((m) => (
+                <figure key={m.id} className="w-32">
+                  <img
+                    src={m.signed_url ?? ""}
+                    alt={m.caption ?? "event photo"}
+                    className="w-32 h-32 object-cover rounded border"
+                  />
+                  <figcaption
+                    className="text-xs text-zinc-600 mt-1 truncate"
+                    title={m.caption ?? ""}
+                  >
+                    {m.caption ?? "untitled"}
+                  </figcaption>
+                </figure>
+              ))}
+              {media.length === 0 && (
+                <div className="text-xs text-zinc-400">No photos yet.</div>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+                className="text-sm"
+              />
+              <input
+                type="text"
+                placeholder="Caption (optional)"
+                value={caption}
+                onChange={(e) => setCaption(e.target.value)}
+                className="px-2 py-1 text-sm border rounded"
+              />
+              <Button
+                size="sm"
+                onClick={uploadPhoto}
+                disabled={!selectedFile || uploading}
+              >
+                {uploading ? "Uploading..." : "Upload"}
+              </Button>
+            </div>
+            {uploadError && <div className="text-xs text-red-700">{uploadError}</div>}
+            {uploadSuccess && <div className="text-xs text-emerald-700">{uploadSuccess}</div>}
+          </div>
+        )}
+
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" size="sm" onClick={onCancel}>
             <X className="h-3 w-3 mr-1" /> Cancel

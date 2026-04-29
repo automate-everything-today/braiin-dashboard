@@ -447,7 +447,9 @@ export type Database = {
             | "replied"
             | "bounced"
             | "opted_out"
-            | "cancelled";
+            | "cancelled"
+            | "needs_attention";
+          attention_reason: string | null;
           last_inbound_at: string | null;
           last_outbound_at: string | null;
           engagement_summary: string | null;
@@ -497,7 +499,9 @@ export type Database = {
             | "replied"
             | "bounced"
             | "opted_out"
-            | "cancelled";
+            | "cancelled"
+            | "needs_attention";
+          attention_reason?: string | null;
           last_inbound_at?: string | null;
           last_outbound_at?: string | null;
           engagement_summary?: string | null;
@@ -547,7 +551,9 @@ export type Database = {
             | "replied"
             | "bounced"
             | "opted_out"
-            | "cancelled";
+            | "cancelled"
+            | "needs_attention";
+          attention_reason?: string | null;
           last_inbound_at?: string | null;
           last_outbound_at?: string | null;
           engagement_summary?: string | null;

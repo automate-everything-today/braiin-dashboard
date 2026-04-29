@@ -248,6 +248,145 @@ export type Database = {
         }
         Relationships: []
       }
+      "event_contacts": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> */
+          "id": number
+          "airtable_record_id": string | null
+          "email": string
+          "name": string | null
+          "title": string | null
+          "company": string | null
+          "phone": string | null
+          "website": string | null
+          "country": string | null
+          "region": string | null
+          /** Note: This is a Foreign Key to `events.id`.<fk table='events' column='id'/> */
+          "event_id": number | null
+          /** Note: This is a Foreign Key to `freight_networks.id`.<fk table='freight_networks' column='id'/> */
+          "attributed_network_id": number | null
+          "meeting_notes": string | null
+          "company_info": string | null
+          "company_type": string | null
+          "met_by": string[]
+          "internal_cc": string | null
+          "contact_role": string | null
+          "is_lead_contact": boolean
+          "tier": number | null
+          "follow_up_status": string
+          "last_inbound_at": string | null
+          "last_outbound_at": string | null
+          "engagement_summary": string | null
+          "draft_subject": string | null
+          "draft_body": string | null
+          "draft_generated_at": string | null
+          "draft_model": string | null
+          "send_from_email": string | null
+          "sent_at": string | null
+          "sent_message_id": string | null
+          "replied_at": string | null
+          "bounced_at": string | null
+          "bounce_reason": string | null
+          "imported_at": string
+          "imported_from_airtable_at": string | null
+          "created_at": string
+          "updated_at": string
+          "seniority_score": number | null
+          "data_source_tags": string[]
+          "attention_reason": string | null
+          /** Note: This is a Foreign Key to `company_groups.id`.<fk table='company_groups' column='id'/> */
+          "company_group_id": number | null
+        }
+        Insert: {
+          "id"?: number
+          "airtable_record_id"?: string | null
+          "email": string
+          "name"?: string | null
+          "title"?: string | null
+          "company"?: string | null
+          "phone"?: string | null
+          "website"?: string | null
+          "country"?: string | null
+          "region"?: string | null
+          "event_id"?: number | null
+          "attributed_network_id"?: number | null
+          "meeting_notes"?: string | null
+          "company_info"?: string | null
+          "company_type"?: string | null
+          "met_by": string[]
+          "internal_cc"?: string | null
+          "contact_role"?: string | null
+          "is_lead_contact"?: boolean
+          "tier"?: number | null
+          "follow_up_status"?: string
+          "last_inbound_at"?: string | null
+          "last_outbound_at"?: string | null
+          "engagement_summary"?: string | null
+          "draft_subject"?: string | null
+          "draft_body"?: string | null
+          "draft_generated_at"?: string | null
+          "draft_model"?: string | null
+          "send_from_email"?: string | null
+          "sent_at"?: string | null
+          "sent_message_id"?: string | null
+          "replied_at"?: string | null
+          "bounced_at"?: string | null
+          "bounce_reason"?: string | null
+          "imported_at"?: string
+          "imported_from_airtable_at"?: string | null
+          "created_at"?: string
+          "updated_at"?: string
+          "seniority_score"?: number | null
+          "data_source_tags": string[]
+          "attention_reason"?: string | null
+          "company_group_id"?: number | null
+        }
+        Update: {
+          "id"?: number
+          "airtable_record_id"?: string | null
+          "email"?: string
+          "name"?: string | null
+          "title"?: string | null
+          "company"?: string | null
+          "phone"?: string | null
+          "website"?: string | null
+          "country"?: string | null
+          "region"?: string | null
+          "event_id"?: number | null
+          "attributed_network_id"?: number | null
+          "meeting_notes"?: string | null
+          "company_info"?: string | null
+          "company_type"?: string | null
+          "met_by"?: string[]
+          "internal_cc"?: string | null
+          "contact_role"?: string | null
+          "is_lead_contact"?: boolean
+          "tier"?: number | null
+          "follow_up_status"?: string
+          "last_inbound_at"?: string | null
+          "last_outbound_at"?: string | null
+          "engagement_summary"?: string | null
+          "draft_subject"?: string | null
+          "draft_body"?: string | null
+          "draft_generated_at"?: string | null
+          "draft_model"?: string | null
+          "send_from_email"?: string | null
+          "sent_at"?: string | null
+          "sent_message_id"?: string | null
+          "replied_at"?: string | null
+          "bounced_at"?: string | null
+          "bounce_reason"?: string | null
+          "imported_at"?: string
+          "imported_from_airtable_at"?: string | null
+          "created_at"?: string
+          "updated_at"?: string
+          "seniority_score"?: number | null
+          "data_source_tags"?: string[]
+          "attention_reason"?: string | null
+          "company_group_id"?: number | null
+        }
+        Relationships: []
+      }
       "email_tags": {
         Row: {
           /** Note: This is a Primary Key.<pk/> */
@@ -636,6 +775,80 @@ export type Database = {
         }
         Relationships: []
       }
+      "import_audit_log": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> */
+          "id": number
+          "imported_at": string
+          "airtable_record_id": string | null
+          "result": string
+          "fields_present": string[]
+          "fields_landed": string[]
+          "rules_snapshot": unknown | null
+          "run_id": string | null
+        }
+        Insert: {
+          "id"?: number
+          "imported_at"?: string
+          "airtable_record_id"?: string | null
+          "result": string
+          "fields_present": string[]
+          "fields_landed": string[]
+          "rules_snapshot"?: unknown | null
+          "run_id"?: string | null
+        }
+        Update: {
+          "id"?: number
+          "imported_at"?: string
+          "airtable_record_id"?: string | null
+          "result"?: string
+          "fields_present"?: string[]
+          "fields_landed"?: string[]
+          "rules_snapshot"?: unknown | null
+          "run_id"?: string | null
+        }
+        Relationships: []
+      }
+      "reply_rules": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> */
+          "id": number
+          "scope_type": string
+          "scope_value": string
+          "instruction": string
+          "source": string
+          "created_by": string | null
+          "active": boolean
+          "usage_count": number
+          "created_at": string
+          "last_used_at": string | null
+        }
+        Insert: {
+          "id"?: number
+          "scope_type": string
+          "scope_value": string
+          "instruction": string
+          "source"?: string
+          "created_by"?: string | null
+          "active"?: boolean
+          "usage_count"?: number
+          "created_at"?: string
+          "last_used_at"?: string | null
+        }
+        Update: {
+          "id"?: number
+          "scope_type"?: string
+          "scope_value"?: string
+          "instruction"?: string
+          "source"?: string
+          "created_by"?: string | null
+          "active"?: boolean
+          "usage_count"?: number
+          "created_at"?: string
+          "last_used_at"?: string | null
+        }
+        Relationships: []
+      }
       "import_volume_stats": {
         Row: {
           "company_id": number | null
@@ -701,6 +914,104 @@ export type Database = {
           "probability"?: number | null
           "color"?: string | null
           "is_active"?: boolean | null
+        }
+        Relationships: []
+      }
+      "freight_networks": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> */
+          "id": number
+          "name": string
+          "primary_domain": string
+          "additional_domains": string[]
+          "relationship": string
+          "network_type": string
+          /** Annual membership fee in fee_currency. NULL on sub-networks means "covered by parent membership". */
+          "annual_fee_amount": number | null
+          "events_per_year": number | null
+          "website": string | null
+          "notes": string | null
+          "active": boolean
+          "created_at": string
+          "updated_at": string
+          /** ISO 4217 code for the annual_fee_amount value. GBP/USD/EUR supported. */
+          "fee_currency": string
+          /** Self-FK. NULL = top-level network. Set when this row is a sub-network (e.g. WCA Pharma -> WCA World).  Note: This is a Foreign Key to `freight_networks.id`.<fk table='freight_networks' column='id'/> */
+          "parent_network_id": number | null
+        }
+        Insert: {
+          "id"?: number
+          "name": string
+          "primary_domain": string
+          "additional_domains": string[]
+          "relationship"?: string
+          "network_type"?: string
+          "annual_fee_amount"?: number | null
+          "events_per_year"?: number | null
+          "website"?: string | null
+          "notes"?: string | null
+          "active"?: boolean
+          "created_at"?: string
+          "updated_at"?: string
+          "fee_currency"?: string
+          "parent_network_id"?: number | null
+        }
+        Update: {
+          "id"?: number
+          "name"?: string
+          "primary_domain"?: string
+          "additional_domains"?: string[]
+          "relationship"?: string
+          "network_type"?: string
+          "annual_fee_amount"?: number | null
+          "events_per_year"?: number | null
+          "website"?: string | null
+          "notes"?: string | null
+          "active"?: boolean
+          "created_at"?: string
+          "updated_at"?: string
+          "fee_currency"?: string
+          "parent_network_id"?: number | null
+        }
+        Relationships: []
+      }
+      "reply_learnings": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> */
+          "id": number
+          "user_email": string
+          "sender_domain": string | null
+          "sender_email": string | null
+          "category": string | null
+          "instruction": string
+          "reply_options": unknown
+          "created_at": string
+          "last_used_at": string | null
+          "usage_count": number
+        }
+        Insert: {
+          "id"?: number
+          "user_email": string
+          "sender_domain"?: string | null
+          "sender_email"?: string | null
+          "category"?: string | null
+          "instruction": string
+          "reply_options": unknown
+          "created_at"?: string
+          "last_used_at"?: string | null
+          "usage_count"?: number
+        }
+        Update: {
+          "id"?: number
+          "user_email"?: string
+          "sender_domain"?: string | null
+          "sender_email"?: string | null
+          "category"?: string | null
+          "instruction"?: string
+          "reply_options"?: unknown
+          "created_at"?: string
+          "last_used_at"?: string | null
+          "usage_count"?: number
         }
         Relationships: []
       }
@@ -1154,6 +1465,55 @@ export type Database = {
         }
         Relationships: []
       }
+      "voice_rules": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> */
+          "id": number
+          "rule_type": string
+          "pattern": string
+          "replacement": string
+          "severity": string
+          "channel": string
+          "notes": string | null
+          "added_by": string | null
+          "active": boolean
+          "catch_count": number
+          "last_caught_at": string | null
+          "created_at": string
+          "updated_at": string
+        }
+        Insert: {
+          "id"?: number
+          "rule_type": string
+          "pattern": string
+          "replacement": string
+          "severity"?: string
+          "channel"?: string
+          "notes"?: string | null
+          "added_by"?: string | null
+          "active"?: boolean
+          "catch_count"?: number
+          "last_caught_at"?: string | null
+          "created_at"?: string
+          "updated_at"?: string
+        }
+        Update: {
+          "id"?: number
+          "rule_type"?: string
+          "pattern"?: string
+          "replacement"?: string
+          "severity"?: string
+          "channel"?: string
+          "notes"?: string | null
+          "added_by"?: string | null
+          "active"?: boolean
+          "catch_count"?: number
+          "last_caught_at"?: string | null
+          "created_at"?: string
+          "updated_at"?: string
+        }
+        Relationships: []
+      }
       "company_scores": {
         Row: {
           /** Note: This is a Primary Key.<pk/> This is a Foreign Key to `companies.id`.<fk table='companies' column='id'/> */
@@ -1282,6 +1642,28 @@ export type Database = {
         }
         Relationships: []
       }
+      "rate_limits": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> */
+          "bucket": string
+          "window_start": string
+          "count": number
+          "updated_at": string
+        }
+        Insert: {
+          "bucket"?: string
+          "window_start"?: string
+          "count"?: number
+          "updated_at"?: string
+        }
+        Update: {
+          "bucket"?: string
+          "window_start"?: string
+          "count"?: number
+          "updated_at"?: string
+        }
+        Relationships: []
+      }
       "unified_companies": {
         Row: {
           "company_name": string | null
@@ -1343,6 +1725,59 @@ export type Database = {
         }
         Relationships: []
       }
+      "granola_meetings": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> */
+          "id": string
+          "title": string
+          "recorded_at": string
+          "transcript": string
+          "summary": string | null
+          "participants": unknown
+          "imported_at": string
+        }
+        Insert: {
+          "id"?: string
+          "title": string
+          "recorded_at": string
+          "transcript": string
+          "summary"?: string | null
+          "participants": unknown
+          "imported_at"?: string
+        }
+        Update: {
+          "id"?: string
+          "title"?: string
+          "recorded_at"?: string
+          "transcript"?: string
+          "summary"?: string | null
+          "participants"?: unknown
+          "imported_at"?: string
+        }
+        Relationships: []
+      }
+      "email_pins": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> */
+          "id": number
+          "user_email": string
+          "email_id": string
+          "pinned_at": string
+        }
+        Insert: {
+          "id"?: number
+          "user_email": string
+          "email_id": string
+          "pinned_at"?: string
+        }
+        Update: {
+          "id"?: number
+          "user_email"?: string
+          "email_id"?: string
+          "pinned_at"?: string
+        }
+        Relationships: []
+      }
       "tasks": {
         Row: {
           /** Note: This is a Primary Key.<pk/> */
@@ -1359,6 +1794,18 @@ export type Database = {
           "status": string | null
           "completed_at": string | null
           "created_at": string | null
+          "outlook_task_id": string | null
+          "outlook_list_id": string | null
+          "last_synced_at": string | null
+          "sync_status": string | null
+          "source_type": string | null
+          "source_id": string | null
+          "source_url": string | null
+          "source_event_id": string | null
+          "related_thread_id": string | null
+          "external_provider": string | null
+          "external_task_id": string | null
+          "external_list_id": string | null
         }
         Insert: {
           "id"?: number
@@ -1373,6 +1820,18 @@ export type Database = {
           "status"?: string | null
           "completed_at"?: string | null
           "created_at"?: string | null
+          "outlook_task_id"?: string | null
+          "outlook_list_id"?: string | null
+          "last_synced_at"?: string | null
+          "sync_status"?: string | null
+          "source_type"?: string | null
+          "source_id"?: string | null
+          "source_url"?: string | null
+          "source_event_id"?: string | null
+          "related_thread_id"?: string | null
+          "external_provider"?: string | null
+          "external_task_id"?: string | null
+          "external_list_id"?: string | null
         }
         Update: {
           "id"?: number
@@ -1387,6 +1846,18 @@ export type Database = {
           "status"?: string | null
           "completed_at"?: string | null
           "created_at"?: string | null
+          "outlook_task_id"?: string | null
+          "outlook_list_id"?: string | null
+          "last_synced_at"?: string | null
+          "sync_status"?: string | null
+          "source_type"?: string | null
+          "source_id"?: string | null
+          "source_url"?: string | null
+          "source_event_id"?: string | null
+          "related_thread_id"?: string | null
+          "external_provider"?: string | null
+          "external_task_id"?: string | null
+          "external_list_id"?: string | null
         }
         Relationships: []
       }
@@ -1481,6 +1952,36 @@ export type Database = {
         }
         Relationships: []
       }
+      "company_groups": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> */
+          "id": number
+          /** Note: This is a Foreign Key to `events.id`.<fk table='events' column='id'/> */
+          "event_id": number
+          "company_name_canonical": string
+          /** Note: This is a Foreign Key to `event_contacts.id`.<fk table='event_contacts' column='id'/> */
+          "lead_contact_id": number | null
+          "lead_overridden_at": string | null
+          "created_at": string
+        }
+        Insert: {
+          "id"?: number
+          "event_id": number
+          "company_name_canonical": string
+          "lead_contact_id"?: number | null
+          "lead_overridden_at"?: string | null
+          "created_at"?: string
+        }
+        Update: {
+          "id"?: number
+          "event_id"?: number
+          "company_name_canonical"?: string
+          "lead_contact_id"?: number | null
+          "lead_overridden_at"?: string | null
+          "created_at"?: string
+        }
+        Relationships: []
+      }
       "client_research": {
         Row: {
           /** Note: This is a Primary Key.<pk/> */
@@ -1572,6 +2073,35 @@ export type Database = {
         }
         Relationships: []
       }
+      "event_media": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> */
+          "id": number
+          /** Note: This is a Foreign Key to `events.id`.<fk table='events' column='id'/> */
+          "event_id": number
+          "storage_path": string
+          "caption": string | null
+          "uploaded_at": string
+          "uploaded_by": string | null
+        }
+        Insert: {
+          "id"?: number
+          "event_id": number
+          "storage_path": string
+          "caption"?: string | null
+          "uploaded_at"?: string
+          "uploaded_by"?: string | null
+        }
+        Update: {
+          "id"?: number
+          "event_id"?: number
+          "storage_path"?: string
+          "caption"?: string | null
+          "uploaded_at"?: string
+          "uploaded_by"?: string | null
+        }
+        Relationships: []
+      }
       "hs_chapters": {
         Row: {
           /** Note: This is a Primary Key.<pk/> */
@@ -1613,6 +2143,15 @@ export type Database = {
           "ai_reply_options": unknown | null
           "ai_quote_details": unknown | null
           "ai_incident_detected": unknown | null
+          "ai_relevant_department": string | null
+          "ai_relevant_mode": string | null
+          "ai_tags": string[] | null
+          "user_tags": string[] | null
+          "relevance_feedback": string | null
+          "ai_conversation_stage": string | null
+          "user_conversation_stage": string | null
+          "last_modified_by": string | null
+          "last_modified_at": string | null
         }
         Insert: {
           "id"?: number
@@ -1631,6 +2170,15 @@ export type Database = {
           "ai_reply_options"?: unknown | null
           "ai_quote_details"?: unknown | null
           "ai_incident_detected"?: unknown | null
+          "ai_relevant_department"?: string | null
+          "ai_relevant_mode"?: string | null
+          "ai_tags"?: string[] | null
+          "user_tags"?: string[] | null
+          "relevance_feedback"?: string | null
+          "ai_conversation_stage"?: string | null
+          "user_conversation_stage"?: string | null
+          "last_modified_by"?: string | null
+          "last_modified_at"?: string | null
         }
         Update: {
           "id"?: number
@@ -1649,6 +2197,15 @@ export type Database = {
           "ai_reply_options"?: unknown | null
           "ai_quote_details"?: unknown | null
           "ai_incident_detected"?: unknown | null
+          "ai_relevant_department"?: string | null
+          "ai_relevant_mode"?: string | null
+          "ai_tags"?: string[] | null
+          "user_tags"?: string[] | null
+          "relevance_feedback"?: string | null
+          "ai_conversation_stage"?: string | null
+          "user_conversation_stage"?: string | null
+          "last_modified_by"?: string | null
+          "last_modified_at"?: string | null
         }
         Relationships: []
       }
@@ -1724,6 +2281,7 @@ export type Database = {
           "email": string | null
           "access_role": string | null
           "page_access": unknown | null
+          "mode": string | null
         }
         Insert: {
           "id"?: number
@@ -1755,6 +2313,7 @@ export type Database = {
           "email"?: string | null
           "access_role"?: string | null
           "page_access"?: unknown | null
+          "mode"?: string | null
         }
         Update: {
           "id"?: number
@@ -1786,6 +2345,7 @@ export type Database = {
           "email"?: string | null
           "access_role"?: string | null
           "page_access"?: unknown | null
+          "mode"?: string | null
         }
         Relationships: []
       }
@@ -2209,6 +2769,32 @@ export type Database = {
         }
         Relationships: []
       }
+      "event_contact_granola_links": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> This is a Foreign Key to `event_contacts.id`.<fk table='event_contacts' column='id'/> */
+          "event_contact_id": number
+          /** Note: This is a Primary Key.<pk/> This is a Foreign Key to `granola_meetings.id`.<fk table='granola_meetings' column='id'/> */
+          "granola_meeting_id": string
+          "match_confidence": number
+          "match_method": string
+          "created_at": string
+        }
+        Insert: {
+          "event_contact_id"?: number
+          "granola_meeting_id"?: string
+          "match_confidence": number
+          "match_method": string
+          "created_at"?: string
+        }
+        Update: {
+          "event_contact_id"?: number
+          "granola_meeting_id"?: string
+          "match_confidence"?: number
+          "match_method"?: string
+          "created_at"?: string
+        }
+        Relationships: []
+      }
       "message_read_receipts": {
         Row: {
           /** Note: This is a Primary Key.<pk/> */
@@ -2434,6 +3020,8 @@ export type Database = {
           "description": string | null
           "coaching_cache": unknown | null
           "coaching_cached_at": string | null
+          /** Note: This is a Foreign Key to `event_contacts.id`.<fk table='event_contacts' column='id'/> */
+          "attributed_event_contact_id": number | null
         }
         Insert: {
           "id"?: number
@@ -2468,6 +3056,7 @@ export type Database = {
           "description"?: string | null
           "coaching_cache"?: unknown | null
           "coaching_cached_at"?: string | null
+          "attributed_event_contact_id"?: number | null
         }
         Update: {
           "id"?: number
@@ -2502,6 +3091,7 @@ export type Database = {
           "description"?: string | null
           "coaching_cache"?: unknown | null
           "coaching_cached_at"?: string | null
+          "attributed_event_contact_id"?: number | null
         }
         Relationships: []
       }
@@ -2640,6 +3230,65 @@ export type Database = {
         }
         Relationships: []
       }
+      "events": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> */
+          "id": number
+          "name": string
+          "event_type": string
+          "start_date": string
+          "end_date": string | null
+          "location": string | null
+          /** Note: This is a Foreign Key to `freight_networks.id`.<fk table='freight_networks' column='id'/> */
+          "via_network_id": number | null
+          /** Total event cost (registration + travel + stand contribution) in cost_currency. Convert to GBP at calc time using geo.fx_rates. */
+          "cost_amount": number | null
+          "attendees": string[]
+          "notes": string | null
+          "active": boolean
+          "created_at": string
+          "updated_at": string
+          /** ISO 4217 code for the cost_amount value. GBP/USD/EUR supported. */
+          "cost_currency": string
+          /** Free-text per-event context that flavours every AI draft. Operator inputs from /events form. e.g. "WCA stand, focus on LATAM partners, Brazil-bound reefer interest, looking to sign Vietnam agents." */
+          "context_brief": string | null
+        }
+        Insert: {
+          "id"?: number
+          "name": string
+          "event_type"?: string
+          "start_date": string
+          "end_date"?: string | null
+          "location"?: string | null
+          "via_network_id"?: number | null
+          "cost_amount"?: number | null
+          "attendees": string[]
+          "notes"?: string | null
+          "active"?: boolean
+          "created_at"?: string
+          "updated_at"?: string
+          "cost_currency"?: string
+          "context_brief"?: string | null
+        }
+        Update: {
+          "id"?: number
+          "name"?: string
+          "event_type"?: string
+          "start_date"?: string
+          "end_date"?: string | null
+          "location"?: string | null
+          "via_network_id"?: number | null
+          "cost_amount"?: number | null
+          "attendees"?: string[]
+          "notes"?: string | null
+          "active"?: boolean
+          "created_at"?: string
+          "updated_at"?: string
+          "cost_currency"?: string
+          "context_brief"?: string | null
+        }
+        Relationships: []
+      }
       "replies": {
         Row: {
           /** Note: This is a Primary Key.<pk/> */
@@ -2706,6 +3355,49 @@ export type Database = {
           "rep_first_action_at"?: string | null
           "created_at"?: string | null
           "account_code"?: string | null
+        }
+        Relationships: []
+      }
+      "classify_batches": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> */
+          "id": number
+          "anthropic_batch_id": string
+          "email_ids": string[]
+          "status": string
+          "submitted_by": string
+          "submitted_at": string
+          "completed_at": string | null
+          "request_count": number
+          "succeeded_count": number
+          "errored_count": number
+          "notes": string | null
+        }
+        Insert: {
+          "id"?: number
+          "anthropic_batch_id": string
+          "email_ids": string[]
+          "status"?: string
+          "submitted_by": string
+          "submitted_at"?: string
+          "completed_at"?: string | null
+          "request_count": number
+          "succeeded_count"?: number
+          "errored_count"?: number
+          "notes"?: string | null
+        }
+        Update: {
+          "id"?: number
+          "anthropic_batch_id"?: string
+          "email_ids"?: string[]
+          "status"?: string
+          "submitted_by"?: string
+          "submitted_at"?: string
+          "completed_at"?: string | null
+          "request_count"?: number
+          "succeeded_count"?: number
+          "errored_count"?: number
+          "notes"?: string | null
         }
         Relationships: []
       }
@@ -3304,6 +3996,43 @@ export type Database = {
           "link"?: string | null
           "is_read"?: boolean | null
           "created_at"?: string | null
+        }
+        Relationships: []
+      }
+      "system_rules": {
+        Row: {
+          /** Note: This is a Primary Key.<pk/> */
+          "id": number
+          "category": string
+          "key": string
+          "value": unknown
+          "previous_value": unknown | null
+          "notes": string | null
+          "active": boolean
+          "updated_at": string
+          "updated_by": string | null
+        }
+        Insert: {
+          "id"?: number
+          "category": string
+          "key": string
+          "value": unknown
+          "previous_value"?: unknown | null
+          "notes"?: string | null
+          "active"?: boolean
+          "updated_at"?: string
+          "updated_by"?: string | null
+        }
+        Update: {
+          "id"?: number
+          "category"?: string
+          "key"?: string
+          "value"?: unknown
+          "previous_value"?: unknown | null
+          "notes"?: string | null
+          "active"?: boolean
+          "updated_at"?: string
+          "updated_by"?: string | null
         }
         Relationships: []
       }

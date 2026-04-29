@@ -40,23 +40,28 @@
  *     "Intermodal 2025" + "Intermodal 2026"). We import the contact once
  *     PER event (one event_contacts row per (email, event_id) pair) so
  *     each follow-up cycle has its own state.
- *   - Records without an email are skipped (we can't follow up by email).
- *   - Records without an event are skipped (we can't ROI-attribute them).
+ *   - Records without an email: imported as needs_attention rows with a
+ *     synthesised placeholder email so we can surface them for manual action.
+ *   - Records without an event: imported with event_id = null and
+ *     follow_up_status = needs_attention so they are visible in the dashboard.
  *
  * Usage:
- *   const result = await importEventContacts();
- *   // { fetched, imported, skipped, errors }
+ *   const result = await importEventContacts({ runId, snapshot });
+ *   // { fetched, imported, needs_attention, errors, run_id, imported_event_ids }
  *
  * Manual trigger (operator) and cron-trigger (every 6h) both call this.
  */
 
 import { supabase } from "@/services/base";
+import type { RulesSnapshot } from "@/lib/system-rules/types";
+import { scoreTitle } from "@/lib/event-followup/seniority";
+import { runGroupDetection } from "@/lib/event-followup/group-pipeline";
 
 const AIRTABLE_BASE_ID = "appDiP9IKunUqdPl1";
 const AIRTABLE_TABLE_ID = "tblMriM6Fox1AatVR";
 const AIRTABLE_API_BASE = "https://api.airtable.com/v0";
 
-const PEOPLE_VALUES = new Set(["Rob", "Sam", "Bruna"]);
+const CHUNK_SIZE = 100;
 
 // Map Rob/Sam/Bruna names to mailbox addresses for met_by[] persistence.
 // Stored as emails so the send-from logic can route directly without a
@@ -66,6 +71,9 @@ const METBY_NAME_TO_EMAIL: Record<string, string> = {
   Sam: "sam.yauner@cortenlogistics.com",
   Bruna: "bruna.natale@cortenlogistics.com",
 };
+// Keep reference to prevent unused-variable warnings - mapping is for
+// documentation; the raw met_by array is stored as-is (see comment in buildRows).
+void METBY_NAME_TO_EMAIL;
 
 type AirtableField = string | string[] | number | boolean | null | undefined;
 
@@ -81,11 +89,31 @@ interface AirtableListResponse {
 
 export interface ImportResult {
   fetched: number;
-  imported: number;
-  updated: number;
-  skipped: number;
-  skip_reasons: Record<string, number>;
+  imported: number;           // landed as a normal contact (has email + event)
+  needs_attention: number;    // landed with follow_up_status = 'needs_attention'
   errors: string[];
+  run_id: string;
+  imported_event_ids: number[]; // distinct events that received contacts
+  groups: {
+    groups_created: number;
+    groups_updated: number;
+    members_tagged: number;
+  };
+}
+
+export interface ImportOpts {
+  runId: string;
+  snapshot: RulesSnapshot;
+}
+
+// Audit row shape (before batched insert).
+interface AuditRow {
+  airtable_record_id: string;
+  result: string;
+  fields_present: string[];
+  fields_landed: string[];
+  rules_snapshot: unknown;
+  run_id: string;
 }
 
 function readApiKey(): string {
@@ -98,7 +126,7 @@ function readApiKey(): string {
   return key;
 }
 
-async function fetchAllRecords(): Promise<AirtableRecord[]> {
+export async function fetchAllRecords(): Promise<AirtableRecord[]> {
   const apiKey = readApiKey();
   const records: AirtableRecord[] = [];
   let offset: string | undefined;
@@ -162,6 +190,59 @@ function mapContactRole(v: AirtableField): "to" | "cc" | "skip" | null {
   return null;
 }
 
+/** Airtable field names we consider when computing fields_present. */
+const AIRTABLE_FIELD_NAMES = [
+  "Name", "Email", "Title", "Company", "Phone", "Website",
+  "Country", "Region", "Event", "Met By", "Internal CC",
+  "Contact Role", "Lead Contact", "Priority", "Company Type",
+  "Company Info", "Meeting Notes",
+];
+
+/** Map Airtable field names to DB column names for fields_landed reporting. */
+const FIELD_TO_COLUMN: Record<string, string> = {
+  Name: "name",
+  Email: "email",
+  Title: "title",
+  Company: "company",
+  Phone: "phone",
+  Website: "website",
+  Country: "country",
+  Region: "region",
+  Event: "event_id",
+  "Met By": "met_by",
+  "Internal CC": "internal_cc",
+  "Contact Role": "contact_role",
+  "Lead Contact": "is_lead_contact",
+  Priority: "tier",
+  "Company Type": "company_type",
+  "Company Info": "company_info",
+  "Meeting Notes": "meeting_notes",
+};
+
+function fieldsPresent(fields: Record<string, AirtableField>): string[] {
+  return AIRTABLE_FIELD_NAMES.filter((name) => {
+    const v = fields[name];
+    if (v === null || v === undefined) return false;
+    if (typeof v === "string") return v.trim().length > 0;
+    if (Array.isArray(v)) return v.length > 0;
+    return true;
+  });
+}
+
+function fieldsLanded(
+  presentFields: string[],
+  eventResolved: boolean,
+): string[] {
+  return presentFields
+    .map((f) => FIELD_TO_COLUMN[f])
+    .filter((col): col is string => {
+      if (!col) return false;
+      // Event only lands if it resolved to an event_id
+      if (col === "event_id") return eventResolved;
+      return true;
+    });
+}
+
 interface EventLookup {
   byName: Map<string, number>;
 }
@@ -207,139 +288,456 @@ function inferAttributedNetwork(
 }
 
 /**
- * Walk the Airtable records and produce one row per (record, event) pair
- * for upsert into event_contacts. Skips records without email or with no
- * resolvable event.
+ * For needs_attention rows (event_id IS NULL), the unique index on
+ * (email, event_id) cannot deduplicate because Postgres treats NULL != NULL.
+ * We therefore check airtable_record_id first and UPDATE if found, INSERT if not.
+ * Returns the id of the written row, or null on error.
  */
-async function buildRows(records: AirtableRecord[]): Promise<{
-  rows: Array<Record<string, unknown>>;
-  skipReasons: Record<string, number>;
-}> {
-  const events = await loadEventLookup();
-  const networks = await loadNetworkLookup();
-  const rows: Array<Record<string, unknown>> = [];
-  const skipReasons: Record<string, number> = {};
+async function upsertNeedsAttentionRow(
+  row: Record<string, unknown>,
+): Promise<{ id: number | null; error: string | null }> {
+  const airtableRecordId = row.airtable_record_id as string;
 
-  const recordSkip = (reason: string) => {
-    skipReasons[reason] = (skipReasons[reason] ?? 0) + 1;
-  };
+  // Check for existing row by airtable_record_id where event_id is NULL.
+  const { data: existing, error: selectError } = await supabase
+    .from("event_contacts")
+    .select("id")
+    .eq("airtable_record_id", airtableRecordId)
+    .is("event_id", null)
+    .limit(1);
 
-  for (const rec of records) {
-    const f = rec.fields;
-    const email = asString(f["Email"]);
-    if (!email) {
-      recordSkip("no_email");
-      continue;
-    }
-
-    const eventNames = asStringArray(f["Event"]);
-    if (eventNames.length === 0) {
-      recordSkip("no_event");
-      continue;
-    }
-
-    // Keep met_by RAW so the LLM sees the full mix: ["Rob","Sam","GKF
-    // Directory","Business Card"]. The draft generator distinguishes people
-    // (rep) from sources (where the contact came from). This is critical
-    // signal - a "GKF Directory" sourcing means we did NOT meet them in
-    // person and the email needs to be written accordingly.
-    const metByRaw = asStringArray(f["Met By"]);
-
-    const baseRow = {
-      airtable_record_id: rec.id,
-      email: email.toLowerCase(),
-      name: asString(f["Name"]),
-      title: asString(f["Title"]),
-      company: asString(f["Company"]),
-      phone: asString(f["Phone"]),
-      website: asString(f["Website"]),
-      country: asString(f["Country"]),
-      region: asString(f["Region"]),
-      met_by: metByRaw,
-      internal_cc: asString(f["Internal CC"]),
-      contact_role: mapContactRole(f["Contact Role"]),
-      is_lead_contact: asBoolean(f["Lead Contact"]),
-      tier: asNumber(f["Priority"]),
-      company_type: asString(f["Company Type"]),
-      company_info: asString(f["Company Info"]),
-      meeting_notes: asString(f["Meeting Notes"]),
-      imported_from_airtable_at: new Date().toISOString(),
+  if (selectError) {
+    return {
+      id: null,
+      error: `needs_attention select failed for ${airtableRecordId}: ${selectError.message}`,
     };
-
-    // One row per (contact, event). Each event_contacts row has its own
-    // follow_up_status so cycles don't collide.
-    for (const eventName of eventNames) {
-      const eventId = events.byName.get(eventName.toLowerCase());
-      if (!eventId) {
-        recordSkip(`unknown_event:${eventName}`);
-        continue;
-      }
-      rows.push({
-        ...baseRow,
-        event_id: eventId,
-        attributed_network_id: inferAttributedNetwork(eventName, networks),
-      });
-    }
   }
 
-  return { rows, skipReasons };
+  const existingRow = (existing ?? [])[0] as { id: number } | undefined;
+
+  if (existingRow) {
+    // UPDATE the existing row by id.
+    const { error: updateError } = await supabase
+      .from("event_contacts")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .update(row as any)
+      .eq("id", existingRow.id);
+
+    if (updateError) {
+      return {
+        id: null,
+        error: `needs_attention update failed for ${airtableRecordId}: ${updateError.message}`,
+      };
+    }
+    return { id: existingRow.id, error: null };
+  } else {
+    // INSERT a new row.
+    const { data: inserted, error: insertError } = await supabase
+      .from("event_contacts")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .insert(row as any)
+      .select("id")
+      .limit(1);
+
+    if (insertError) {
+      return {
+        id: null,
+        error: `needs_attention insert failed for ${airtableRecordId}: ${insertError.message}`,
+      };
+    }
+    const newRow = (inserted ?? [])[0] as { id: number } | undefined;
+    return { id: newRow?.id ?? null, error: null };
+  }
+}
+
+/** Batch insert audit rows for a chunk. */
+async function insertAuditRows(auditRows: AuditRow[]): Promise<string[]> {
+  if (auditRows.length === 0) return [];
+  const errors: string[] = [];
+  const { error } = await supabase
+    .from("import_audit_log")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .insert(auditRows as any);
+  if (error) {
+    errors.push(`audit_log insert failed: ${error.message}`);
+  }
+  return errors;
 }
 
 /**
- * Upsert rows into event_contacts. Uniqueness is on (lower(email), event_id),
- * but Postgres on-conflict requires an actual unique constraint, which we
- * have via the unique index event_contacts_email_event_uniq. PostgREST
- * supports this via the `onConflict` parameter.
+ * Walk the Airtable records and produce contact rows for upsert into
+ * event_contacts. Records without email or event are no longer silently
+ * dropped - they become needs_attention rows. Per-record outcomes are written
+ * to import_audit_log.
  */
-async function upsertRows(
-  rows: Array<Record<string, unknown>>,
-): Promise<{ inserted: number; errors: string[] }> {
-  if (rows.length === 0) return { inserted: 0, errors: [] };
+async function buildAndPersistRows(
+  records: AirtableRecord[],
+  opts: ImportOpts,
+): Promise<{
+  imported: number;
+  needsAttention: number;
+  errors: string[];
+  importedEventIds: Set<number>;
+}> {
+  const events = await loadEventLookup();
+  const networks = await loadNetworkLookup();
+
+  const seniorityWeights = opts.snapshot.raw["seniority_score:weights"] as
+    | Record<string, number>
+    | undefined ?? {};
+
+  let imported = 0;
+  let needsAttention = 0;
   const errors: string[] = [];
-  // Chunk to keep request bodies under typical PostgREST limits.
-  const CHUNK = 100;
-  let inserted = 0;
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const chunk = rows.slice(i, i + CHUNK);
-    // Type assertion: the runtime rows always have email + event_id (we drop
-    // any without earlier in buildRows). The Insert type is strict so we
-    // assert through the column-permissive shape here.
-    const { error, count } = await supabase
-      .from("event_contacts")
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .upsert(chunk as any, {
-        // Upsert on (email, event_id) - the natural unique pair. One row
-        // per contact per event so a contact attending both Intermodal and
-        // GKF gets two follow-up rows with independent state. See migration
-        // 060 for the index rework.
-        onConflict: "email,event_id",
-        // We want the import to overwrite Airtable-side fields (name, notes,
-        // tier, met_by) but NOT overwrite Braiin-side state (follow_up_status,
-        // sent_at, draft_body). Since upsert only sets the columns we provide,
-        // omitting those preserves them.
-        ignoreDuplicates: false,
-        count: "exact",
-      });
-    if (error) {
-      errors.push(`upsert chunk ${i / CHUNK}: ${error.message}`);
-      continue;
+  const importedEventIds = new Set<number>();
+
+  // Process in chunks so audit rows stay manageable.
+  for (let chunkStart = 0; chunkStart < records.length; chunkStart += CHUNK_SIZE) {
+    const chunk = records.slice(chunkStart, chunkStart + CHUNK_SIZE);
+
+    // Normal (email + event) rows accumulated for batch upsert.
+    const normalRows: Array<Record<string, unknown>> = [];
+    // Audit rows accumulated for batch insert at end of chunk.
+    const auditRows: AuditRow[] = [];
+    // Per-normal-row metadata needed for audit (index matches normalRows).
+    const normalRowMeta: Array<{
+      airtableRecordId: string;
+      presentFields: string[];
+      eventName: string;
+      eventId: number;
+    }> = [];
+
+    for (const rec of chunk) {
+      const f = rec.fields;
+      const presentFields = fieldsPresent(f);
+      const rawEmail = asString(f["Email"]);
+
+      // --- No email: synthesise placeholder and surface as needs_attention ---
+      if (!rawEmail) {
+        const syntheticEmail = `pending+${rec.id.toLowerCase()}@needs-attention.local`;
+        const row: Record<string, unknown> = {
+          airtable_record_id: rec.id,
+          email: syntheticEmail,
+          name: asString(f["Name"]),
+          title: asString(f["Title"]),
+          company: asString(f["Company"]),
+          phone: asString(f["Phone"]),
+          website: asString(f["Website"]),
+          country: asString(f["Country"]),
+          region: asString(f["Region"]),
+          met_by: asStringArray(f["Met By"]),
+          internal_cc: asString(f["Internal CC"]),
+          contact_role: mapContactRole(f["Contact Role"]),
+          is_lead_contact: asBoolean(f["Lead Contact"]),
+          tier: asNumber(f["Priority"]),
+          company_type: asString(f["Company Type"]),
+          company_info: asString(f["Company Info"]),
+          meeting_notes: asString(f["Meeting Notes"]),
+          imported_from_airtable_at: new Date().toISOString(),
+          event_id: null,
+          follow_up_status: "needs_attention",
+          attention_reason: "no_email",
+          seniority_score: scoreTitle(asString(f["Title"]), seniorityWeights),
+        };
+
+        const { error: writeError } = await upsertNeedsAttentionRow(row);
+        if (writeError) {
+          errors.push(writeError);
+          auditRows.push({
+            airtable_record_id: rec.id,
+            result: `error:${writeError}`,
+            fields_present: presentFields,
+            fields_landed: [],
+            rules_snapshot: opts.snapshot.raw,
+            run_id: opts.runId,
+          });
+        } else {
+          needsAttention++;
+          const baseFieldsLanded = fieldsLanded(presentFields, false);
+          // Synthesised placeholder email is written to DB; include it in fields_landed.
+          if (!baseFieldsLanded.includes("email")) {
+            baseFieldsLanded.push("email");
+          }
+          auditRows.push({
+            airtable_record_id: rec.id,
+            result: "needs_attention:no_email",
+            fields_present: presentFields,
+            fields_landed: baseFieldsLanded,
+            rules_snapshot: opts.snapshot.raw,
+            run_id: opts.runId,
+          });
+        }
+        continue;
+      }
+
+      const email = rawEmail.toLowerCase();
+      const eventNames = asStringArray(f["Event"]);
+
+      // --- No event: persist with event_id = null, needs_attention ---
+      if (eventNames.length === 0) {
+        const row: Record<string, unknown> = {
+          airtable_record_id: rec.id,
+          email,
+          name: asString(f["Name"]),
+          title: asString(f["Title"]),
+          company: asString(f["Company"]),
+          phone: asString(f["Phone"]),
+          website: asString(f["Website"]),
+          country: asString(f["Country"]),
+          region: asString(f["Region"]),
+          met_by: asStringArray(f["Met By"]),
+          internal_cc: asString(f["Internal CC"]),
+          contact_role: mapContactRole(f["Contact Role"]),
+          is_lead_contact: asBoolean(f["Lead Contact"]),
+          tier: asNumber(f["Priority"]),
+          company_type: asString(f["Company Type"]),
+          company_info: asString(f["Company Info"]),
+          meeting_notes: asString(f["Meeting Notes"]),
+          imported_from_airtable_at: new Date().toISOString(),
+          event_id: null,
+          follow_up_status: "needs_attention",
+          attention_reason: "no_event",
+          seniority_score: scoreTitle(asString(f["Title"]), seniorityWeights),
+        };
+
+        const { error: writeError } = await upsertNeedsAttentionRow(row);
+        if (writeError) {
+          errors.push(writeError);
+          auditRows.push({
+            airtable_record_id: rec.id,
+            result: `error:${writeError}`,
+            fields_present: presentFields,
+            fields_landed: [],
+            rules_snapshot: opts.snapshot.raw,
+            run_id: opts.runId,
+          });
+        } else {
+          needsAttention++;
+          auditRows.push({
+            airtable_record_id: rec.id,
+            result: "needs_attention:no_event",
+            fields_present: presentFields,
+            fields_landed: fieldsLanded(presentFields, false),
+            rules_snapshot: opts.snapshot.raw,
+            run_id: opts.runId,
+          });
+        }
+        continue;
+      }
+
+      // --- One row per (contact, event) ---
+      for (const eventName of eventNames) {
+        const eventId = events.byName.get(eventName.toLowerCase());
+
+        if (!eventId) {
+          // Event name doesn't match any known event: needs_attention with
+          // unmapped_event reason.
+          const row: Record<string, unknown> = {
+            airtable_record_id: rec.id,
+            email,
+            name: asString(f["Name"]),
+            title: asString(f["Title"]),
+            company: asString(f["Company"]),
+            phone: asString(f["Phone"]),
+            website: asString(f["Website"]),
+            country: asString(f["Country"]),
+            region: asString(f["Region"]),
+            met_by: asStringArray(f["Met By"]),
+            internal_cc: asString(f["Internal CC"]),
+            contact_role: mapContactRole(f["Contact Role"]),
+            is_lead_contact: asBoolean(f["Lead Contact"]),
+            tier: asNumber(f["Priority"]),
+            company_type: asString(f["Company Type"]),
+            company_info: asString(f["Company Info"]),
+            meeting_notes: asString(f["Meeting Notes"]),
+            imported_from_airtable_at: new Date().toISOString(),
+            event_id: null,
+            follow_up_status: "needs_attention",
+            attention_reason: `unmapped_event:${eventName}`,
+            seniority_score: scoreTitle(asString(f["Title"]), seniorityWeights),
+          };
+
+          const { error: writeError } = await upsertNeedsAttentionRow(row);
+          if (writeError) {
+            errors.push(writeError);
+            auditRows.push({
+              airtable_record_id: rec.id,
+              result: `error:${writeError}`,
+              fields_present: presentFields,
+              fields_landed: [],
+              rules_snapshot: opts.snapshot.raw,
+              run_id: opts.runId,
+            });
+          } else {
+            needsAttention++;
+            auditRows.push({
+              airtable_record_id: rec.id,
+              result: `needs_attention:unmapped_event:${eventName}`,
+              fields_present: presentFields,
+              fields_landed: fieldsLanded(presentFields, false),
+              rules_snapshot: opts.snapshot.raw,
+              run_id: opts.runId,
+            });
+          }
+          continue;
+        }
+
+        // Normal path: email + resolved event.
+        const normalRow: Record<string, unknown> = {
+          airtable_record_id: rec.id,
+          email,
+          name: asString(f["Name"]),
+          title: asString(f["Title"]),
+          company: asString(f["Company"]),
+          phone: asString(f["Phone"]),
+          website: asString(f["Website"]),
+          country: asString(f["Country"]),
+          region: asString(f["Region"]),
+          met_by: asStringArray(f["Met By"]),
+          internal_cc: asString(f["Internal CC"]),
+          contact_role: mapContactRole(f["Contact Role"]),
+          is_lead_contact: asBoolean(f["Lead Contact"]),
+          tier: asNumber(f["Priority"]),
+          company_type: asString(f["Company Type"]),
+          company_info: asString(f["Company Info"]),
+          meeting_notes: asString(f["Meeting Notes"]),
+          imported_from_airtable_at: new Date().toISOString(),
+          event_id: eventId,
+          attributed_network_id: inferAttributedNetwork(eventName, networks),
+          seniority_score: scoreTitle(asString(f["Title"]), seniorityWeights),
+        };
+
+        normalRows.push(normalRow);
+        normalRowMeta.push({
+          airtableRecordId: rec.id,
+          presentFields,
+          eventName,
+          eventId,
+        });
+      }
     }
-    inserted += count ?? chunk.length;
+
+    // Batch upsert normal rows for this chunk.
+    if (normalRows.length > 0) {
+      const { error: upsertError, count } = await supabase
+        .from("event_contacts")
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .upsert(normalRows as any, {
+          // Upsert on (email, event_id) - the natural unique pair. One row
+          // per contact per event so a contact attending both Intermodal and
+          // GKF gets two follow-up rows with independent state. See migration
+          // 060 for the index rework.
+          onConflict: "email,event_id",
+          // We want the import to overwrite Airtable-side fields (name, notes,
+          // tier, met_by) but NOT overwrite Braiin-side state (follow_up_status,
+          // sent_at, draft_body). Since upsert only sets the columns we provide,
+          // omitting those preserves them.
+          ignoreDuplicates: false,
+          count: "exact",
+        });
+
+      if (upsertError) {
+        const msg = `upsert chunk ${chunkStart / CHUNK_SIZE}: ${upsertError.message}`;
+        errors.push(msg);
+        // All rows in this normal batch failed - audit them as errors.
+        for (const meta of normalRowMeta) {
+          auditRows.push({
+            airtable_record_id: meta.airtableRecordId,
+            result: `error:${msg}`,
+            fields_present: meta.presentFields,
+            fields_landed: [],
+            rules_snapshot: opts.snapshot.raw,
+            run_id: opts.runId,
+          });
+        }
+      } else {
+        const upserted = count ?? normalRows.length;
+        imported += upserted;
+        for (const meta of normalRowMeta) {
+          importedEventIds.add(meta.eventId);
+          auditRows.push({
+            airtable_record_id: meta.airtableRecordId,
+            result: "imported",
+            fields_present: meta.presentFields,
+            fields_landed: fieldsLanded(meta.presentFields, true),
+            rules_snapshot: opts.snapshot.raw,
+            run_id: opts.runId,
+          });
+        }
+      }
+    }
+
+    // Batch insert audit rows for this chunk.
+    const auditErrors = await insertAuditRows(auditRows);
+    errors.push(...auditErrors);
   }
-  return { inserted, errors };
+
+  return { imported, needsAttention, errors, importedEventIds };
 }
 
-export async function importEventContacts(): Promise<ImportResult> {
+export async function fetchAllAirtableRecordsForAudit(): Promise<Array<{
+  id: string;
+  email: string | null;
+  event_name: string | null;
+  name: string | null;
+  title: string | null;
+  company: string | null;
+  country: string | null;
+  region: string | null;
+  meeting_notes: string | null;
+  company_info: string | null;
+}>> {
   const records = await fetchAllRecords();
-  const { rows, skipReasons } = await buildRows(records);
-  const { inserted, errors } = await upsertRows(rows);
+  return records.map((rec) => {
+    const f = rec.fields;
+    const eventNames = asStringArray(f["Event"]);
+    return {
+      id: rec.id,
+      email: asString(f["Email"]),
+      // For audit purposes, take the first event name. Records with multiple events
+      // produce multiple DB rows in the importer; the audit only needs one comparison.
+      event_name: eventNames[0] ?? null,
+      name: asString(f["Name"]),
+      title: asString(f["Title"]),
+      company: asString(f["Company"]),
+      country: asString(f["Country"]),
+      region: asString(f["Region"]),
+      meeting_notes: asString(f["Meeting Notes"]),
+      company_info: asString(f["Company Info"]),
+    };
+  });
+}
+
+export async function importEventContacts(
+  opts: ImportOpts,
+  _fetchRecords: () => Promise<AirtableRecord[]> = fetchAllRecords,
+): Promise<ImportResult> {
+  const records = await _fetchRecords();
+  const { imported, needsAttention, errors, importedEventIds } =
+    await buildAndPersistRows(records, opts);
+
+  const groups = { groups_created: 0, groups_updated: 0, members_tagged: 0 };
+
+  for (const eventId of importedEventIds) {
+    try {
+      const detection = await runGroupDetection(eventId, opts.snapshot);
+      groups.groups_created += detection.groups_created;
+      groups.groups_updated += detection.groups_updated;
+      groups.members_tagged += detection.members_tagged;
+    } catch (err) {
+      errors.push(
+        `runGroupDetection failed for event ${eventId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   return {
     fetched: records.length,
-    imported: inserted,
-    updated: 0, // upsert doesn't distinguish insert vs update without extra cost; bundled into "imported"
-    skipped: records.length - rows.length,
-    skip_reasons: skipReasons,
+    imported,
+    needs_attention: needsAttention,
     errors,
+    run_id: opts.runId,
+    imported_event_ids: Array.from(importedEventIds),
+    groups,
   };
 }
