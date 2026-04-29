@@ -375,6 +375,7 @@ export type Database = {
           cost_currency: "GBP" | "USD" | "EUR";
           attendees: string[];
           notes: string | null;
+          context_brief: string | null;
           active: boolean;
           created_at: string;
           updated_at: string;

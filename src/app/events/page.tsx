@@ -33,6 +33,7 @@ interface EventRow {
   cost_currency: Currency;
   attendees: string[];
   notes: string | null;
+  context_brief: string | null;
   active: boolean;
 }
 
@@ -326,6 +327,7 @@ function EditForm({
   const [costAmount, setCostAmount] = useState<number | null>(existing?.cost_amount ?? null);
   const [costCurrency, setCostCurrency] = useState<Currency>(existing?.cost_currency ?? "GBP");
   const [notes, setNotes] = useState(existing?.notes ?? "");
+  const [contextBrief, setContextBrief] = useState(existing?.context_brief ?? "");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -346,6 +348,7 @@ function EditForm({
       cost_amount: costAmount,
       cost_currency: costCurrency,
       notes: notes.trim() || null,
+      context_brief: contextBrief.trim() || null,
     };
     if (existing) payload.id = existing.id;
     const res = await fetch("/api/events", {
@@ -459,12 +462,27 @@ function EditForm({
           </div>
         </div>
         <div>
-          <label className="text-xs uppercase tracking-wide text-zinc-500">Notes</label>
+          <label className="text-xs uppercase tracking-wide text-zinc-500">Notes (internal)</label>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder="Anything internal worth remembering"
+            placeholder="Anything internal worth remembering - not used by the AI."
             className="w-full mt-1 px-3 py-2 text-sm border rounded-md min-h-[60px]"
+          />
+        </div>
+        <div>
+          <label className="text-xs uppercase tracking-wide text-zinc-500">
+            Context brief for AI drafts
+          </label>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            Free-text. The AI uses this in EVERY follow-up draft for this event. Tell it the
+            angle: stand position, focus lanes, what we&apos;re hunting for, what we offer.
+          </p>
+          <textarea
+            value={contextBrief}
+            onChange={(e) => setContextBrief(e.target.value)}
+            placeholder="e.g. We were on the WCA stand. Main focus: signing up LATAM partners for Brazil-bound reefer volumes. Sam was hunting for Vietnam capacity. Open to UK-bound consols from anywhere."
+            className="w-full mt-1 px-3 py-2 text-sm border rounded-md min-h-[100px]"
           />
         </div>
         {err && <div className="text-sm text-red-700">{err}</div>}

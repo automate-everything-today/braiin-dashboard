@@ -30,6 +30,7 @@ const createSchema = z.object({
   cost_currency: z.enum(CURRENCIES).default("GBP"),
   attendees: z.array(z.string().email()).default([]),
   notes: z.string().max(2000).nullable().optional(),
+  context_brief: z.string().max(5000).nullable().optional(),
 });
 
 const updateSchema = createSchema.partial().extend({
@@ -193,6 +194,7 @@ export async function POST(req: Request) {
       cost_currency: input.cost_currency,
       attendees: input.attendees,
       notes: input.notes ?? null,
+      context_brief: input.context_brief ?? null,
       active: true,
     })
     .select()
@@ -221,6 +223,7 @@ export async function PATCH(req: Request) {
   if (updates.cost_currency !== undefined) payload.cost_currency = updates.cost_currency;
   if (updates.attendees !== undefined) payload.attendees = updates.attendees;
   if (updates.notes !== undefined) payload.notes = updates.notes;
+  if (updates.context_brief !== undefined) payload.context_brief = updates.context_brief;
   if (updates.active !== undefined) payload.active = updates.active;
   if (Object.keys(payload).length === 0) return apiError("No fields to update", 400);
 

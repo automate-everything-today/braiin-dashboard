@@ -44,6 +44,9 @@ export interface DraftInput {
   event_name: string;
   event_location: string | null;
   event_start: string;
+  /** Per-event context brief from /events form. Operator's notes that
+   *  flavour every draft for this event (e.g. "WCA stand, focus on LATAM"). */
+  event_context_brief: string | null;
   tier: number | null;
   rep_email: string;
   rep_first_name: string;
@@ -74,30 +77,33 @@ ROB'S VOICE:
 - Direct, specific, lane-named. Always names actual places (Felixstowe, Sao Paulo, Jakarta).
 - Reciprocal: when offering something, mentions what we'd take in return ("Likewise, anything UK-bound...").
 - Concrete CTA always - "Let us know what works your end and we'll get something in the diary."
-- Uses 'Hi [Name]' for first contact, 'Hey [Name]' once warm.
+- Salutation: "Hi [Name]" for first contact, "Hey [Name]" once warm. NEVER a comma after the name.
+- Sign-off (pick ONE): "Best regards\\nRob" / "All the best\\nRob" / "Kind regards\\nRob". NEVER a comma after the sign-off phrase. NEVER include email address or signature block in the body - that's added by the mail client.
 - Hyphens NEVER em-dashes. Inline asides use a normal hyphen ' - '.
 - 3-paragraph max for warm follow-ups; shorter for scheduling replies.
 - No 'I hope this email finds you well'-class openers ever. Open with the specific reason.`,
 
   "sam.yauner@cortenlogistics.com": `
 SAM'S VOICE:
-- More informal than Rob - uses 'Hey' as default opener.
+- More informal than Rob - uses 'Hey [Name]' as default opener. NEVER a comma after the name.
 - Self-deprecating warmth. Honest about mistakes ('My bad', 'Sorry - now attached').
 - Very short replies. Often 3 lines or fewer.
 - Natural British idioms: 'having a think', 'best of luck with it', 'no still haven't made a decision'.
 - Single emoji with context (🙂) - never decorative emojis.
 - Direct asks without numbering. Names the example ('the upcoming one in Playa del Carmen for example').
+- Sign-off (pick ONE): "Sam" alone for known contacts. "Best regards\\nSam" or "Cheers\\nSam" for newer contacts. NEVER a comma after the sign-off phrase.
 - No apology for non-decisions or pushed timelines.`,
 
   "bruna.natale@cortenlogistics.com": `
 BRUNA'S VOICE:
 - Bilingual: writes in BRAZILIAN PORTUGUESE to Brazilian contacts (.com.br domains, BR locations, PT names), in ENGLISH to others.
-- PT-BR opener: 'Oi [Name], bom dia!', 'Oi [Name], bom dia!!', 'Oieee'. PT-BR closer: 'Fico a disposicao 🙂', 'Obrigada, otima semana!'
-- ENGLISH opener: 'Hello [Name] 🙂'. Note the emoji in the greeting line - signature Bruna.
+- PT-BR opener: 'Oi [Name], bom dia!', 'Oi [Name], bom dia!!', 'Oieee'. NEVER a comma after the name in English; the BR-PT 'Oi [Name],' WITH comma is acceptable as it's a Portuguese convention.
+- PT-BR closer: 'Fico a disposicao 🙂' or 'Obrigada\\nBruna'. NO comma after the sign-off phrase.
+- ENGLISH opener: 'Hello [Name] 🙂'. Emoji in the greeting line is signature Bruna. NEVER a comma after the name.
 - ENGLISH adds parenthetical asides: '(although I miss Brazil already)!', '(Sun is shining over the grey UK today ☀️)'.
+- ENGLISH sign-off: "Regards\\nBruna Natale" - NEVER a comma after "Regards".
 - Heavy emoji use overall (🙂 🤗 ☀️ 😂 😆) - more than Rob/Sam, especially in PT.
 - Lane-named: 'Europe (UK) and Mexico', 'Brazil to UK'.
-- WATCH-OUT in English: trims toward 'Looking forward to staying in close contact and developing business together' - this is acceptable but borderline; do not amplify it. Keep her warmth, trim the formulaic closers.
 - For Brazilian recipients: respond in PT-BR. Short banter is welcome ('Tudo bem?', 'Como dizem aqui...').`,
 };
 
@@ -105,7 +111,8 @@ const DEFAULT_VOICE_NOTE = `
 DEFAULT VOICE (no rep matched):
 - Direct, specific, no corporate filler.
 - Lane-named where possible.
-- 'Hi [Name]' opener.
+- 'Hi [Name]' opener with NO comma after the name.
+- Sign-off: "Best regards\\n[FirstName]" with NO comma.
 - No 'I hope this email finds you well'.`;
 
 function repVoice(repEmail: string): string {
@@ -127,6 +134,9 @@ META-RULES (apply universally - never violate):
 10. WHEN meeting notes are empty: write a clean, confident 3-line note. "Good to meet you at [event] - [one specific thing relevant to their company / country / role]. If there's a specific lane or service you're working on, send it through and we will take a look." NEVER apologise, NEVER hedge, NEVER ask which colleague met them.
 11. ALWAYS sign off in the rep's voice (see REP'S VOICE).
 12. Tier-A: ~3 paragraphs with specific value prop tied to their role/lane. Tier-B: 2 paragraphs. Tier-C / no-meeting-notes: 3-4 lines max.
+13. NEVER put a comma after the salutation. "Hi Adria" not "Hi Adria,". "Hey Jose" not "Hey Jose,". "Hello Lorelei 🙂" not "Hello Lorelei,". (BR-Portuguese 'Oi [Name],' is the one exception.)
+14. NEVER put a comma after the sign-off phrase. "Best regards" not "Best regards,". "Kind regards" not "Kind regards,". "Regards" not "Regards,". "All the best" not "All the best,". (Trailing-comma sign-offs are an instant AI-tell.)
+15. NEVER include the rep's email address or signature block in the email body. The mail client appends those. Just the first name on its own line after the sign-off phrase.
 `;
 
 /**
@@ -212,6 +222,11 @@ function buildUserPrompt(input: DraftInput): string {
 
   lines.push("=== EVENT ===");
   lines.push(`${input.event_name}${input.event_location ? ` (${input.event_location})` : ""}, ${input.event_start.split("T")[0]}`);
+  if (input.event_context_brief) {
+    lines.push("");
+    lines.push("Event context brief (operator-provided - lean into this when writing the value prop / hook):");
+    lines.push(input.event_context_brief);
+  }
   lines.push("");
 
   lines.push("=== HOW WE GOT THIS CONTACT ===");

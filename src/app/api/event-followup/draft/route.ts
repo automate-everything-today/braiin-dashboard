@@ -79,7 +79,12 @@ interface ContactRow {
   tier: number | null;
   follow_up_status: string;
   event_id: number | null;
-  events: { name: string; location: string | null; start_date: string } | null;
+  events: {
+    name: string;
+    location: string | null;
+    start_date: string;
+    context_brief: string | null;
+  } | null;
 }
 
 async function loadContact(contactId: number): Promise<ContactRow | null> {
@@ -104,13 +109,18 @@ async function loadContact(contactId: number): Promise<ContactRow | null> {
 
   const { data: event } = await supabase
     .from("events")
-    .select("name, location, start_date")
+    .select("name, location, start_date, context_brief")
     .eq("id", base.event_id)
     .maybeSingle();
   return {
     ...base,
     events: event
-      ? (event as { name: string; location: string | null; start_date: string })
+      ? (event as {
+          name: string;
+          location: string | null;
+          start_date: string;
+          context_brief: string | null;
+        })
       : null,
   };
 }
@@ -157,6 +167,7 @@ async function draftOne(contactId: number, force: boolean): Promise<{
     event_name: contact.events.name,
     event_location: contact.events.location,
     event_start: contact.events.start_date,
+    event_context_brief: contact.events.context_brief,
     tier: contact.tier,
     rep_email: repEmail,
     rep_first_name: repFirstName,
