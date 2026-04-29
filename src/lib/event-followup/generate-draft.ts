@@ -119,6 +119,49 @@ function repVoice(repEmail: string): string {
   return REP_VOICE_NOTES[repEmail.toLowerCase()] ?? DEFAULT_VOICE_NOTE;
 }
 
+/**
+ * Corten company brief - global pitch context applied to EVERY draft. Shapes
+ * how the LLM thinks about geography, scope, and value prop regardless of
+ * which event the contact came from.
+ *
+ * TODO (operator-editable): move to a `org_settings` singleton table so this
+ * can be edited from the dashboard without a code change. Hardcoded for now
+ * to ship fast and iterate the prompt against real drafts.
+ */
+const CORTEN_COMPANY_BRIEF = `
+ABOUT CORTEN (apply to every draft):
+
+Corten Logistics is a UK-based freight forwarder. Headquartered in London.
+
+GEOGRAPHIC SCOPE (critical - the LLM gets this wrong by default):
+- Our primary lane shape is "UK <-> anywhere" plus Ireland inbound/outbound.
+- We do NOT focus only on the country where a trade show happened. Meeting a
+  contact at Intermodal South America does NOT mean we only want Brazil
+  business with them.
+- When writing to a contact in country X, the relevant pitch is:
+  (a) UK <-> X direct flows (our home turf)
+  (b) X <-> third-country flows routed via the UK (we can handle those too)
+  (c) Any inbound to UK / Ireland from any origin (we always want this)
+- We do NOT do domestic-only flows entirely outside the UK (e.g., we don't
+  move boxes Brazil <-> Brazil). Don't pitch that.
+
+SERVICES:
+- Ocean (FCL + LCL), Air, Road / Customs / Warehousing.
+- Reefer-capable. Project cargo. eCommerce (UK fulfilment for inbound flows).
+
+TONE / POSITIONING:
+- Independent forwarder, agent-network model (WCA + GKF/ULN members).
+- We win on responsiveness and lane-specific knowledge, not on global scale.
+- Reciprocal: we always ask what we can refer back to the contact's network.
+
+WHEN WRITING:
+- Anchor the value prop in the contact's country and what UK <-> [their country] flow they likely have.
+- Never assume the trade-show country defines the trade lane.
+- Reference specific UK ports / airports where it strengthens the pitch
+  (Felixstowe, Southampton, London Heathrow, London Gateway, Liverpool,
+  Belfast, Dublin) - but only if the lane fits.
+`;
+
 const META_RULES = `
 META-RULES (apply universally - never violate):
 
@@ -173,6 +216,8 @@ async function buildBansBlock(channel: Channel): Promise<string> {
 
 function buildSystemPrompt(repEmail: string, bansBlock: string): string {
   return `You are writing a post-conference follow-up email on behalf of a Corten Logistics team member. Output MUST follow the rules below exactly.
+
+${CORTEN_COMPANY_BRIEF}
 
 ${META_RULES}
 
