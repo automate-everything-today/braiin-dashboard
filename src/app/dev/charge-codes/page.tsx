@@ -12,7 +12,7 @@
  * was built from the Cargowise dictionary (107 codes) in the wisor folder.
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -785,9 +785,54 @@ export default function ChargeCodesPage() {
   // Mutable copy of the dictionary - edits persist within the session.
   // Production wires this to quotes.charge_codes via API.
   const [codes, setCodes] = useState<ChargeCode[]>(CHARGE_CODES);
+  const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<{ draft: ChargeCode; isNew: boolean } | null>(
     null,
   );
+
+  // Fetch live data from /api/charge-codes on mount; fall back to seed
+  // data if the API errors (e.g. before migrations are applied).
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch("/api/charge-codes")
+      .then((r) => r.json())
+      .then((data: { codes?: ChargeCode[]; error?: string }) => {
+        if (cancelled) return;
+        if (data.codes && data.codes.length > 0) setCodes(data.codes);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function persistOne(code: ChargeCode) {
+    return fetch("/api/charge-codes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(code),
+    });
+  }
+
+  function persistDelete(braiinCode: string) {
+    return fetch("/api/charge-codes", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ braiinCode }),
+    });
+  }
+
+  function persistBulk(rows: ChargeCode[]) {
+    return fetch("/api/charge-codes", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rows }),
+    });
+  }
   const [upload, setUpload] = useState<ParsedUpload | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -834,6 +879,7 @@ export default function ChargeCodesPage() {
       for (const r of rows) map.set(r.braiinCode, r);
       return Array.from(map.values());
     });
+    persistBulk(rows).catch(() => {});
   }
 
   const [query, setQuery] = useState("");
@@ -854,10 +900,12 @@ export default function ChargeCodesPage() {
       }
       return [next, ...prev];
     });
+    persistOne(next).catch(() => {});
   }
 
   function deleteCode(braiinCode: string) {
     setCodes((prev) => prev.filter((c) => c.braiinCode !== braiinCode));
+    persistDelete(braiinCode).catch(() => {});
   }
 
   const filtered = useMemo(() => {

@@ -14,7 +14,7 @@
  * computed by the schema (most non-NULL scope fields wins).
  */
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1708,6 +1708,43 @@ export default function MarginsPage() {
   const [testOpen, setTestOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Fetch live rules on mount; fall back to RULES seed on failure.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/margin-rules")
+      .then((r) => r.json())
+      .then((data: { rules?: MarginRule[] }) => {
+        if (cancelled) return;
+        if (data.rules && data.rules.length > 0) setRules(data.rules);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function persistOne(rule: MarginRule) {
+    return fetch("/api/margin-rules", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(rule),
+    });
+  }
+  function persistDelete(ruleId: string) {
+    return fetch("/api/margin-rules", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ruleId }),
+    });
+  }
+  function persistBulk(rules: MarginRule[]) {
+    return fetch("/api/margin-rules", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rules }),
+    });
+  }
+
   function handleTemplate() {
     downloadCsv("margin-rules-template.csv", makeMarginTemplate());
   }
@@ -1753,6 +1790,7 @@ export default function MarginsPage() {
       }
       return Array.from(map.values());
     });
+    persistBulk(rows).catch(() => {});
   }
 
   function saveRule(next: MarginRule) {
@@ -1768,10 +1806,15 @@ export default function MarginsPage() {
         : { ...next, ruleId: nextRuleId(prev) };
       return [...prev, idAssigned];
     });
+    // DB-side: rule_id is a UUID column; pass empty string for new rules
+    // so the row is generated server-side, then we'll re-fetch on the
+    // next mount to get the canonical id. This keeps the UI snappy.
+    persistOne(next.ruleId ? next : { ...next, ruleId: "" }).catch(() => {});
   }
 
   function deleteRule(ruleId: string) {
     setRules((prev) => prev.filter((r) => r.ruleId !== ruleId));
+    persistDelete(ruleId).catch(() => {});
   }
 
   const sortedRules = useMemo(
