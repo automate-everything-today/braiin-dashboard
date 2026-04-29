@@ -1,0 +1,41 @@
+-- Template: seed margin rules for a NEW tenant.
+--
+-- Use when onboarding a new client who wants the Corten-style starting
+-- rule set as a base. Copy this file, set v_org_id to the new org's
+-- UUID, then apply via Supabase SQL editor.
+--
+-- Empty by default for new tenants - the original 049 migration only
+-- seeds Corten's specific org_id (00000000-0000-0000-0000-000000000001).
+-- New tenants get an empty quotes.margin_rules table and can choose to:
+--   1. Apply this template with their org_id substituted in
+--   2. Upload a CSV via /dev/margins
+--   3. Add rules one-by-one via "Add rule" button
+--   4. Stay empty (everything falls through to the default 100% catch-all
+--      ONCE that rule has been added; no rule = no margin = sell at cost,
+--      which is almost never what you want)
+--
+-- The rule set below mirrors src/app/dev/margins/page.tsx's RULES
+-- constant which represents Wisor's "Margin Template" matrix.
+
+DO $$
+DECLARE
+    v_org_id UUID := 'REPLACE-ME-WITH-NEW-ORG-UUID';
+BEGIN
+    IF v_org_id::text = 'REPLACE-ME-WITH-NEW-ORG-UUID' THEN
+        RAISE EXCEPTION 'Set v_org_id to the new tenant org UUID before applying.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM core.organisations WHERE id = v_org_id) THEN
+        RAISE EXCEPTION 'Org % not found in core.organisations.', v_org_id;
+    END IF;
+    IF EXISTS (SELECT 1 FROM quotes.margin_rules WHERE org_id = v_org_id) THEN
+        RAISE NOTICE 'Org % already has margin rules; skipping.', v_org_id;
+        RETURN;
+    END IF;
+
+    -- Body identical to migration 049 - copy the INSERT block here verbatim,
+    -- replacing only the v_org_id binding above.
+    -- See supabase/migrations/049_seed_corten_margin_rules.sql for the
+    -- canonical 22-rule list.
+
+    RAISE NOTICE 'Seeded margin rules for org %', v_org_id;
+END $$;

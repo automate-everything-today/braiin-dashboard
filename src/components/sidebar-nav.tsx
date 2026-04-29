@@ -36,6 +36,7 @@ import {
   Truck,
   UserCog,
   Users,
+  Wallet,
   Workflow,
 } from "lucide-react";
 import { SidebarFlyout, type FlyoutSection } from "@/components/sidebar-flyout";
@@ -134,6 +135,7 @@ const DEV: FlyoutSection[] = [
       { href: "/dev/build-log", label: "Build log", description: "Running ledger of everything shipped", icon: History },
       { href: "/dev/roadmap", label: "Roadmap", description: "CTO mind map - private", icon: BarChart3 },
       { href: "/dev/security", label: "Security", description: "Posture + findings + event stream", icon: ShieldCheck },
+      { href: "/dev/costs", label: "Costs + counterfactual", description: "Spend tracking + traditional-team comparison", icon: Wallet },
     ],
   },
 ];
