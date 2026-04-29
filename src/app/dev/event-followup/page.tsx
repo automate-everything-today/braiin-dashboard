@@ -592,6 +592,42 @@ function Inner() {
               await loadNeedsAttention();
             });
           }}
+          onBulkAssignEvent={async (ids, eventId) => {
+            return runAction(`bulk-assign-${ids.length}`, async () => {
+              const res = await fetch("/api/event-followup/contacts/bulk", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  ids,
+                  event_id: eventId,
+                  follow_up_status: "pending",
+                  attention_reason: null,
+                }),
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || "Bulk assign failed");
+              setActionResult(`Assigned ${data.updated} contacts to event.`);
+              await loadNeedsAttention();
+              if (selectedEventId) await loadContacts(selectedEventId);
+              await loadEvents();
+            });
+          }}
+          onBulkMarkJunk={async (ids) => {
+            return runAction(`bulk-junk-${ids.length}`, async () => {
+              const res = await fetch("/api/event-followup/contacts/bulk", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  ids,
+                  follow_up_status: "cancelled",
+                }),
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || "Bulk mark junk failed");
+              setActionResult(`Marked ${data.updated} contacts as cancelled.`);
+              await loadNeedsAttention();
+            });
+          }}
           loading={needsAttentionAll === null}
         />
       ) : (
@@ -869,6 +905,8 @@ function NeedsAttentionView({
   busyAction,
   onAssignEvent,
   onMarkJunk,
+  onBulkAssignEvent,
+  onBulkMarkJunk,
   loading,
 }: {
   contacts: ContactRow[];
@@ -876,6 +914,8 @@ function NeedsAttentionView({
   busyAction: string | null;
   onAssignEvent: (contactId: number, eventId: number) => Promise<void>;
   onMarkJunk: (contactId: number) => Promise<void>;
+  onBulkAssignEvent: (ids: number[], eventId: number) => Promise<void>;
+  onBulkMarkJunk: (ids: number[]) => Promise<void>;
   loading: boolean;
 }) {
   // Count by reason for the summary badges
@@ -887,6 +927,40 @@ function NeedsAttentionView({
     }
     return counts;
   }, [contacts]);
+
+  // Multi-select state for bulk operations.
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkEventId, setBulkEventId] = useState<string>("");
+
+  // Reset selection if the contact list changes underneath us (e.g. after a refresh).
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const visible = new Set(contacts.map((c) => c.id));
+      const next = new Set<number>();
+      for (const id of prev) if (visible.has(id)) next.add(id);
+      return next;
+    });
+  }, [contacts]);
+
+  const visibleIds = useMemo(() => contacts.map((c) => c.id), [contacts]);
+  const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+  const someSelected = selectedIds.size > 0 && !allSelected;
+
+  const toggleAll = () => {
+    if (allSelected) setSelectedIds(new Set());
+    else setSelectedIds(new Set(visibleIds));
+  };
+  const toggleOne = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const bulkBusy =
+    busyAction === `bulk-assign-${selectedIds.size}` || busyAction === `bulk-junk-${selectedIds.size}`;
 
   if (loading) {
     return (
@@ -920,11 +994,92 @@ function NeedsAttentionView({
         ))}
       </div>
 
+      {/* Bulk action bar - only visible when at least one row is selected */}
+      {selectedIds.size > 0 && (
+        <Card className="border-zinc-300 bg-zinc-50">
+          <CardContent className="p-3 flex flex-wrap items-center gap-3">
+            <span className="text-sm font-medium text-zinc-800">
+              {selectedIds.size} selected
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-zinc-600">Assign to event:</span>
+              <select
+                value={bulkEventId}
+                onChange={(e) => setBulkEventId(e.target.value)}
+                className="px-2 py-1 text-xs border rounded-md bg-white max-w-[200px]"
+                disabled={bulkBusy}
+              >
+                <option value="">Pick event...</option>
+                {events.map((e) => (
+                  <option key={e.event_id} value={String(e.event_id)}>
+                    {e.event_name}
+                  </option>
+                ))}
+              </select>
+              <Button
+                size="sm"
+                className="h-7 text-xs"
+                disabled={!bulkEventId || bulkBusy}
+                onClick={async () => {
+                  if (!bulkEventId) return;
+                  await onBulkAssignEvent(
+                    Array.from(selectedIds),
+                    Number(bulkEventId),
+                  );
+                  setSelectedIds(new Set());
+                  setBulkEventId("");
+                }}
+              >
+                {busyAction === `bulk-assign-${selectedIds.size}`
+                  ? "Assigning..."
+                  : `Assign ${selectedIds.size}`}
+              </Button>
+            </div>
+            <span className="text-zinc-300">|</span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              disabled={bulkBusy}
+              onClick={async () => {
+                await onBulkMarkJunk(Array.from(selectedIds));
+                setSelectedIds(new Set());
+              }}
+            >
+              {busyAction === `bulk-junk-${selectedIds.size}`
+                ? "Marking..."
+                : `Mark ${selectedIds.size} as junk`}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs ml-auto"
+              onClick={() => setSelectedIds(new Set())}
+              disabled={bulkBusy}
+            >
+              Clear selection
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someSelected;
+                    }}
+                    onChange={toggleAll}
+                    className="cursor-pointer"
+                    aria-label="Select all"
+                  />
+                </TableHead>
                 <TableHead className="w-44">Name</TableHead>
                 <TableHead>Company</TableHead>
                 <TableHead className="w-52">Email</TableHead>
@@ -943,7 +1098,19 @@ function NeedsAttentionView({
                 const needsEmail = reason === "no_email";
 
                 return (
-                  <TableRow key={c.id}>
+                  <TableRow
+                    key={c.id}
+                    className={selectedIds.has(c.id) ? "bg-blue-50/40" : ""}
+                  >
+                    <TableCell className="align-top">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(c.id)}
+                        onChange={() => toggleOne(c.id)}
+                        className="cursor-pointer"
+                        aria-label={`Select ${displayName}`}
+                      />
+                    </TableCell>
                     <TableCell className="font-medium align-top max-w-[12rem]">
                       <div className="truncate" title={displayName}>
                         {displayName}
