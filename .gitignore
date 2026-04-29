@@ -50,3 +50,6 @@ supabase/.temp/
 
 # Cargowise / WiseTech licensed reference material - do not redistribute
 docs/cargowise/
+
+# Wisor reference materials (margins, rate flows, CW push templates) - commercial sensitive
+docs/wisor/

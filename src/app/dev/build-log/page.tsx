@@ -4,9 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageGuard } from "@/components/page-guard";
-import { History, Search } from "lucide-react";
-
-const PILL_SM = "text-[10px] px-1.5 py-0 leading-[18px] h-[18px] font-normal tracking-normal";
+import { AlertTriangle, History, Search } from "lucide-react";
+import { PILL_SM } from "@/lib/ui-constants";
+import { BraiinLoader } from "@/components/braiin-loader";
 
 interface Entry {
   log_id: string;
@@ -55,15 +55,35 @@ function fmtDate(iso: string) {
 export default function BuildLogPage() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [areaFilter, setAreaFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
 
   useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
     fetch("/api/build-log")
-      .then((r) => r.json())
-      .then((d) => setEntries(d.entries ?? []))
-      .finally(() => setLoading(false));
+      .then(async (r) => {
+        const d = (await r.json()) as { entries?: Entry[]; error?: string };
+        if (!r.ok) throw new Error(d.error ?? `Load failed (${r.status})`);
+        return d;
+      })
+      .then((d) => {
+        if (cancelled) return;
+        setEntries(d.entries ?? []);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Load failed");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const areas = useMemo(() => Array.from(new Set(entries.map((e) => e.area).filter(Boolean))) as string[], [entries]);
@@ -74,7 +94,21 @@ export default function BuildLogPage() {
     return entries.filter((e) => {
       if (areaFilter !== "all" && e.area !== areaFilter) return false;
       if (typeFilter !== "all" && e.item_type !== typeFilter) return false;
-      if (q && ![e.title, e.summary, e.notes, e.commit_message, ...(e.tags ?? [])].join(" ").toLowerCase().includes(q)) return false;
+      // Filter optional fields - empty defaults instead of relying on
+      // join() converting `undefined` to the string "undefined", which
+      // would make any search for the literal "undefined" match every row.
+      if (q) {
+        const hay = [
+          e.title ?? "",
+          e.summary ?? "",
+          e.notes ?? "",
+          e.commit_message ?? "",
+          ...(e.tags ?? []),
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
       return true;
     });
   }, [entries, query, areaFilter, typeFilter]);
@@ -152,7 +186,19 @@ export default function BuildLogPage() {
             </select>
           </div>
 
-          {loading && <div className="text-xs text-zinc-500 italic">Loading...</div>}
+          {error && (
+            <div className="border border-rose-300 bg-rose-50 text-rose-800 text-xs px-3 py-2 rounded flex items-start gap-2">
+              <AlertTriangle className="size-3.5 shrink-0 mt-0.5" />
+              <div className="flex-1">{error}</div>
+              <button
+                onClick={() => setError(null)}
+                className="text-rose-700 hover:text-rose-900 text-[11px] underline"
+              >
+                dismiss
+              </button>
+            </div>
+          )}
+          {loading && <BraiinLoader label="Loading build log..." />}
 
           {grouped.map(([day, list]) => (
             <div key={day}>

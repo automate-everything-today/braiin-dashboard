@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { PageGuard } from "@/components/page-guard";
 import {
+  AlertTriangle,
   ArrowRight,
   Check,
   ChevronDown,
@@ -23,9 +24,8 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-
-const PILL_SM =
-  "text-[10px] px-1.5 py-0 leading-[18px] h-[18px] font-normal tracking-normal";
+import { PILL_SM } from "@/lib/ui-constants";
+import { BraiinLoader } from "@/components/braiin-loader";
 
 type Status =
   | "new"
@@ -118,16 +118,21 @@ function fmtDate(iso?: string) {
 export default function ChangeRequestsPage() {
   const [requests, setRequests] = useState<Request[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"open" | "all" | Status>("open");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   async function refresh() {
     setLoading(true);
+    setError(null);
     try {
       const r = await fetch("/api/change-requests");
-      const data = await r.json();
+      const data = (await r.json()) as { requests?: Request[]; error?: string };
+      if (!r.ok) throw new Error(data.error ?? `Load failed (${r.status})`);
       setRequests(data.requests ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Load failed");
     } finally {
       setLoading(false);
     }
@@ -147,16 +152,21 @@ export default function ChangeRequestsPage() {
   }
 
   async function patchRequest(req: Request, patch: Record<string, unknown>) {
-    const r = await fetch("/api/change-requests", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ request_id: req.request_id, ...patch }),
-    });
-    if (r.ok) {
-      const data = await r.json();
-      setRequests((list) =>
-        list.map((x) => (x.request_id === req.request_id ? data.request : x)),
-      );
+    try {
+      const r = await fetch("/api/change-requests", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ request_id: req.request_id, ...patch }),
+      });
+      const data = (await r.json()) as { request?: Request; error?: string };
+      if (!r.ok) throw new Error(data.error ?? `Update failed (${r.status})`);
+      if (data.request) {
+        setRequests((list) =>
+          list.map((x) => (x.request_id === req.request_id ? data.request! : x)),
+        );
+      }
+    } catch (e) {
+      setError(e instanceof Error ? `Update failed: ${e.message}` : "Update failed");
     }
   }
 
@@ -258,10 +268,21 @@ export default function ChangeRequestsPage() {
             </div>
           </div>
 
-          {/* Requests */}
-          {loading && (
-            <div className="text-xs text-zinc-500 italic">Loading...</div>
+          {error && (
+            <div className="border border-rose-300 bg-rose-50 text-rose-800 text-xs px-3 py-2 rounded flex items-start gap-2">
+              <AlertTriangle className="size-3.5 shrink-0 mt-0.5" />
+              <div className="flex-1">{error}</div>
+              <button
+                onClick={() => setError(null)}
+                className="text-rose-700 hover:text-rose-900 text-[11px] underline"
+              >
+                dismiss
+              </button>
+            </div>
           )}
+
+          {/* Requests */}
+          {loading && <BraiinLoader label="Loading change requests..." />}
           {!loading && filtered.length === 0 && (
             <Card className="border-dashed">
               <CardContent className="py-10 text-center text-sm text-zinc-500">

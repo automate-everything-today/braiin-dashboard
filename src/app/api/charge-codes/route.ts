@@ -1,25 +1,31 @@
 // CRUD for quotes.charge_codes (canonical Braiin dictionary) +
 // the corresponding tms.charge_code_map row when tms_origin === 'cargowise'.
 
+import { z } from "zod";
 import { supabase } from "@/services/base";
+import { requireAuth, requireManager } from "@/lib/api-auth";
+
+const ROUTE = "/api/charge-codes";
 
 // Cross-schema shim: the generated Database type only knows the public
 // schema. Cast to a minimal shape that lets us hit other schemas.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as unknown as { schema: (s: string) => any };
 
-interface ChargeCodeRow {
-  braiinCode: string;
-  description: string;
-  billingType: "margin" | "revenue" | "disbursement";
-  macroGroup: "origin_exw" | "freight" | "destination_delivery" | "insurance_other";
-  defaultMarginPct: number;
-  applicableModes: string[];
-  applicableDirections: string[];
-  tmsOrigin: "cargowise" | "magaya" | "descartes" | "native";
-  cwCode: string;
-  cwDepartments: string[];
-}
+const chargeCodeSchema = z.object({
+  braiinCode: z.string().min(1).max(64),
+  description: z.string().min(1).max(500),
+  billingType: z.enum(["margin", "revenue", "disbursement"]),
+  macroGroup: z.enum(["origin_exw", "freight", "destination_delivery", "insurance_other"]),
+  defaultMarginPct: z.number().min(-100).max(1000),
+  applicableModes: z.array(z.string().max(32)).max(20),
+  applicableDirections: z.array(z.string().max(32)).max(20),
+  tmsOrigin: z.enum(["cargowise", "magaya", "descartes", "native"]),
+  cwCode: z.string().max(64).default(""),
+  cwDepartments: z.array(z.string().max(64)).max(50).default([]),
+});
+
+type ChargeCodeRow = z.infer<typeof chargeCodeSchema>;
 
 function rowToApi(
   r: Record<string, unknown>,
@@ -41,6 +47,9 @@ function rowToApi(
 }
 
 export async function GET() {
+  const auth = await requireAuth(ROUTE);
+  if (!auth.ok) return auth.response;
+
   const { data: codes, error: e1 } = await db
     .schema("quotes")
     .from("charge_codes")
@@ -48,11 +57,20 @@ export async function GET() {
     .order("braiin_code");
   if (e1) return Response.json({ error: e1.message }, { status: 500 });
 
-  const { data: maps } = await db
+  // Surface the tms mapping error rather than silently dropping it - a missing
+  // mapping table or schema-permissions mistake should be visible to the
+  // operator, not pretended away with empty CW codes.
+  const { data: maps, error: e2 } = await db
     .schema("tms")
     .from("charge_code_map")
     .select("*")
     .eq("provider_id", "cargowise");
+  if (e2) {
+    return Response.json(
+      { error: `tms.charge_code_map query failed: ${e2.message}` },
+      { status: 500 },
+    );
+  }
 
   const mapByBraiin = new Map<
     string,
@@ -76,10 +94,15 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as ChargeCodeRow;
-  if (!body.braiinCode || !body.description) {
-    return Response.json({ error: "braiinCode + description required" }, { status: 400 });
+  const auth = await requireManager(ROUTE);
+  if (!auth.ok) return auth.response;
+
+  const parsed = chargeCodeSchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return Response.json({ error: "Invalid input", issues: parsed.error.issues }, { status: 400 });
   }
+  const body = parsed.data;
+
   const { error: e1 } = await db
     .schema("quotes")
     .from("charge_codes")
@@ -120,12 +143,19 @@ export async function POST(req: Request) {
   return Response.json({ success: true });
 }
 
+const bulkSchema = z.object({ rows: z.array(chargeCodeSchema).min(1).max(2000) });
+
 // Bulk upsert for CSV imports.
 export async function PATCH(req: Request) {
-  const { rows } = (await req.json()) as { rows: ChargeCodeRow[] };
-  if (!Array.isArray(rows) || rows.length === 0) {
-    return Response.json({ error: "rows[] required" }, { status: 400 });
+  const auth = await requireManager(ROUTE);
+  if (!auth.ok) return auth.response;
+
+  const parsed = bulkSchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return Response.json({ error: "Invalid input", issues: parsed.error.issues }, { status: 400 });
   }
+  const rows = parsed.data.rows;
+
   const codeRows = rows.map((b) => ({
     braiin_code: b.braiinCode,
     description: b.description,
@@ -164,9 +194,18 @@ export async function PATCH(req: Request) {
   return Response.json({ success: true, imported: rows.length });
 }
 
+const deleteSchema = z.object({ braiinCode: z.string().min(1).max(64) });
+
 export async function DELETE(req: Request) {
-  const { braiinCode } = await req.json();
-  if (!braiinCode) return Response.json({ error: "braiinCode required" }, { status: 400 });
+  const auth = await requireManager(ROUTE);
+  if (!auth.ok) return auth.response;
+
+  const parsed = deleteSchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return Response.json({ error: "braiinCode required" }, { status: 400 });
+  }
+  const { braiinCode } = parsed.data;
+
   await db
     .schema("tms")
     .from("charge_code_map")

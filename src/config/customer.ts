@@ -27,7 +27,7 @@ export const ADMIN_EMAILS: readonly string[] = (
 
 if (ADMIN_EMAILS.length === 0 && process.env.NODE_ENV !== "test") {
   console.warn(
-    "[config] ADMIN_EMAILS is empty — all sign-in attempts will be rejected. Set ADMIN_EMAILS in your environment."
+    "[config] ADMIN_EMAILS is empty - all sign-in attempts will be rejected. Set ADMIN_EMAILS in your environment."
   );
 }
 

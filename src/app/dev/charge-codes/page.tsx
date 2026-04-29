@@ -50,9 +50,8 @@ import {
   type ChargeCode,
   type TmsOrigin,
 } from "@/lib/quotes/charge-codes-data";
-
-const PILL_SM =
-  "text-[10px] px-1.5 py-0 leading-[18px] h-[18px] font-normal tracking-normal";
+import { PILL_SM } from "@/lib/ui-constants";
+import { BraiinLoader } from "@/components/braiin-loader";
 
 // ============================================================
 // Presentation helpers
@@ -782,26 +781,43 @@ const EMPTY_DRAFT: ChargeCode = {
 };
 
 export default function ChargeCodesPage() {
-  // Mutable copy of the dictionary - edits persist within the session.
-  // Production wires this to quotes.charge_codes via API.
-  const [codes, setCodes] = useState<ChargeCode[]>(CHARGE_CODES);
-  const [loading, setLoading] = useState(false);
+  // Live dictionary loaded from /api/charge-codes on mount. Empty until the
+  // first fetch resolves; the BraiinLoader covers the gap. We do NOT
+  // pre-populate with seed data because that would mask a broken API.
+  const [codes, setCodes] = useState<ChargeCode[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ draft: ChargeCode; isNew: boolean } | null>(
     null,
   );
 
-  // Fetch live data from /api/charge-codes on mount; fall back to seed
-  // data if the API errors (e.g. before migrations are applied).
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
     fetch("/api/charge-codes")
-      .then((r) => r.json())
-      .then((data: { codes?: ChargeCode[]; error?: string }) => {
-        if (cancelled) return;
-        if (data.codes && data.codes.length > 0) setCodes(data.codes);
+      .then(async (r) => {
+        const data = (await r.json()) as { codes?: ChargeCode[]; error?: string };
+        if (!r.ok) throw new Error(data.error ?? `Load failed (${r.status})`);
+        return data;
       })
-      .catch(() => {})
+      .then((data) => {
+        if (cancelled) return;
+        // Fail loud if the dictionary is genuinely empty - that almost
+        // always means a missing migration, not "no codes yet".
+        setCodes(data.codes ?? []);
+        if ((data.codes ?? []).length === 0) {
+          setCodes(CHARGE_CODES);
+          setError(
+            "Charge code dictionary is empty in the DB - showing seed data. Apply migration 040 + populate quotes.charge_codes.",
+          );
+        }
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Load failed");
+        setCodes(CHARGE_CODES);
+      })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
@@ -810,28 +826,28 @@ export default function ChargeCodesPage() {
     };
   }, []);
 
-  function persistOne(code: ChargeCode) {
-    return fetch("/api/charge-codes", {
-      method: "POST",
+  async function callApi(method: string, body: unknown): Promise<void> {
+    const r = await fetch("/api/charge-codes", {
+      method,
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(code),
+      body: JSON.stringify(body),
     });
+    if (!r.ok) {
+      const data = (await r.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error ?? `${method} failed (${r.status})`);
+    }
   }
 
-  function persistDelete(braiinCode: string) {
-    return fetch("/api/charge-codes", {
-      method: "DELETE",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ braiinCode }),
-    });
+  async function persistOne(code: ChargeCode) {
+    return callApi("POST", code);
   }
 
-  function persistBulk(rows: ChargeCode[]) {
-    return fetch("/api/charge-codes", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ rows }),
-    });
+  async function persistDelete(braiinCode: string) {
+    return callApi("DELETE", { braiinCode });
+  }
+
+  async function persistBulk(rows: ChargeCode[]) {
+    return callApi("PATCH", { rows });
   }
   const [upload, setUpload] = useState<ParsedUpload | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -879,7 +895,9 @@ export default function ChargeCodesPage() {
       for (const r of rows) map.set(r.braiinCode, r);
       return Array.from(map.values());
     });
-    persistBulk(rows).catch(() => {});
+    persistBulk(rows).catch((e: unknown) => {
+      setError(e instanceof Error ? `Bulk import failed: ${e.message}` : "Bulk import failed");
+    });
   }
 
   const [query, setQuery] = useState("");
@@ -900,12 +918,16 @@ export default function ChargeCodesPage() {
       }
       return [next, ...prev];
     });
-    persistOne(next).catch(() => {});
+    persistOne(next).catch((e: unknown) => {
+      setError(e instanceof Error ? `Save failed: ${e.message}` : "Save failed");
+    });
   }
 
   function deleteCode(braiinCode: string) {
     setCodes((prev) => prev.filter((c) => c.braiinCode !== braiinCode));
-    persistDelete(braiinCode).catch(() => {});
+    persistDelete(braiinCode).catch((e: unknown) => {
+      setError(e instanceof Error ? `Delete failed: ${e.message}` : "Delete failed");
+    });
   }
 
   const filtered = useMemo(() => {
@@ -986,6 +1008,20 @@ export default function ChargeCodesPage() {
         </div>
 
         <div className="max-w-[1600px] mx-auto px-6 py-6 space-y-6">
+          {error && (
+            <div className="border border-rose-300 bg-rose-50 text-rose-800 text-xs px-3 py-2 rounded flex items-start gap-2">
+              <AlertTriangle className="size-3.5 shrink-0 mt-0.5" />
+              <div className="flex-1">{error}</div>
+              <button
+                onClick={() => setError(null)}
+                className="text-rose-700 hover:text-rose-900 text-[11px] underline"
+              >
+                dismiss
+              </button>
+            </div>
+          )}
+          {loading && <BraiinLoader label="Loading charge codes..." />}
+
           {/* Intro card */}
           <Card className="border-violet-200 bg-violet-50/40">
             <CardContent className="py-4 px-5 flex items-start gap-3">

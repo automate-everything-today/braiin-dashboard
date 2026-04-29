@@ -72,7 +72,7 @@ const CONVERSATION = [
     time: "09:14",
     body: (
       <>
-        Got an RFQ from <b>ABC Manufacturing</b> — Felixstowe → Shanghai, 2×40HC, electronics, urgent.
+        Got an RFQ from <b>ABC Manufacturing</b> - Felixstowe → Shanghai, 2×40HC, electronics, urgent.
         Pulled their priority profile: price-led (55%), service-aware (25%). Last 5 wins were
         cheapest carrier.
         <br />
@@ -109,7 +109,7 @@ const CONVERSATION = [
     body: (
       <>
         4 of 8 back. <b>Hapag, Maersk, MSC, CMA</b> all returned. Waiting on ONE, Evergreen, OOCL,
-        Cargo.one. Live grid below — I'll surface a recommendation once 6+ are in.
+        Cargo.one. Live grid below - I'll surface a recommendation once 6+ are in.
       </>
     ),
   },
@@ -214,7 +214,7 @@ const RFQ_ROWS: RfqRow[] = [
 
 const RECENT_FEEDBACK = [
   { customer: "ABC", carrier: "Hapag-Lloyd", outcome: "won", note: "Customer flagged Hapag's reliability stat as decisive" },
-  { customer: "ABC", carrier: "MSC", outcome: "lost", note: "Lost on transit — customer pushed back on 33d" },
+  { customer: "ABC", carrier: "MSC", outcome: "lost", note: "Lost on transit - customer pushed back on 33d" },
   { customer: "ABC", carrier: "Maersk", outcome: "won", note: "Won on schedule alignment" },
 ];
 
@@ -229,7 +229,7 @@ function fmtMoney(n: number, cur = "£") {
 }
 
 function ScoreBadge({ score }: { score: number }) {
-  if (score === 0) return <span className="text-zinc-400 text-xs">—</span>;
+  if (score === 0) return <span className="text-zinc-400 text-xs">-</span>;
   const tone =
     score >= 80
       ? "bg-emerald-100 text-emerald-800"
@@ -1772,7 +1772,7 @@ export default function QuotePreviewPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-0">
-                <div className="text-lg font-mono">£2,400 – £2,650</div>
+                <div className="text-lg font-mono">£2,400 - £2,650</div>
                 <div className="text-[11px] text-zinc-500 mt-1">
                   Based on 23 observed jobs FXT-CNSHA 40HC last 90d. Trend +3%.
                 </div>
@@ -2067,7 +2067,7 @@ export default function QuotePreviewPage() {
                     Headline: <b>£2,861 all-in</b>, valid 14 days, 32-day transit. Recommended carrier
                     Hapag-Lloyd selected on the basis of 94% on-time delivery on this lane (vs ~81%
                     industry average) and zero incidents across our last 12 sailings together. Two
-                    alternatives also available — happy to discuss if a different balance suits.
+                    alternatives also available - happy to discuss if a different balance suits.
                   </div>
                   <div>Best,</div>
                   <div>Rob</div>

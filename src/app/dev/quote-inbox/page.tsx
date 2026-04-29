@@ -470,7 +470,7 @@ const ENTRIES: InboxEntry[] = [
   ...ROWS.map((r) => ({ kind: "single" as const, row: r })),
 ];
 
-// All draft rows flattened — used for KPI counts.
+// All draft rows flattened - used for KPI counts.
 const ALL_ROWS: InboxRow[] = [
   ...ROWS,
   ...SIBLING_GROUPS.flatMap((g) => g.children),

@@ -1,4 +1,5 @@
 import { supabase } from "@/services/base";
+import { logSecurityEvent } from "@/lib/security/log";
 
 const DEFAULT_WINDOW_SECONDS = 60;
 const DEFAULT_MAX_REQUESTS = 30;
@@ -34,7 +35,17 @@ export async function checkRateLimit(
     return true;
   }
 
-  return data === true;
+  if (data !== true) {
+    // Log rate-limit hit so the security dashboard can spot abuse patterns.
+    // Fire-and-forget; never delays the rejection.
+    void logSecurityEvent({
+      event_type: "rate_limit_hit",
+      severity: "medium",
+      details: { bucket, limit, window_seconds: windowSeconds },
+    });
+    return false;
+  }
+  return true;
 }
 
 /**

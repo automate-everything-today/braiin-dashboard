@@ -11,9 +11,8 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Lightbulb, Paperclip, Send, Sparkles, X } from "lucide-react";
-
-const PILL_SM =
-  "text-[10px] px-1.5 py-0 leading-[18px] h-[18px] font-normal tracking-normal";
+import { BraiinLoader } from "@/components/braiin-loader";
+import { PILL_SM } from "@/lib/ui-constants";
 
 type Priority = "low" | "medium" | "high" | "urgent";
 
@@ -87,7 +86,7 @@ export function ChangeRequestWidget() {
         setAttachments((a) => [...a, data.attachment]);
       }
     } catch (e) {
-      setError(String(e));
+      setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
       setUploading(false);
     }
@@ -105,11 +104,12 @@ export function ChangeRequestWidget() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          // Full URL (host + path + search + hash) so the CTO can
-          // jump straight to the exact context the request was raised
-          // from. Falls back to pathname server-side.
+          // Pathname only - never include search or hash. Some /dev pages
+          // pass tokens or IDs in the query string and we don't want any
+          // of that landing in the change_requests table where every
+          // authenticated viewer can read it.
           source_page:
-            typeof window !== "undefined" ? window.location.href : "unknown",
+            typeof window !== "undefined" ? window.location.pathname : "unknown",
           title: title.trim(),
           description: description.trim(),
           priority,
@@ -132,7 +132,7 @@ export function ChangeRequestWidget() {
         }, 1800);
       }
     } catch (e) {
-      setError(String(e));
+      setError(e instanceof Error ? e.message : "Submit failed");
     } finally {
       setSubmitting(false);
     }
@@ -170,7 +170,7 @@ export function ChangeRequestWidget() {
                 <div className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
                   Page captured:{" "}
                   <span className="font-mono text-zinc-700 break-all">
-                    {typeof window !== "undefined" ? window.location.href : ""}
+                    {typeof window !== "undefined" ? window.location.pathname : ""}
                   </span>
                   <br />
                   Paste a screenshot with Cmd+V or use the paperclip below.
@@ -294,11 +294,7 @@ export function ChangeRequestWidget() {
                         }}
                       />
                     </div>
-                    {uploading && (
-                      <div className="text-[11px] text-zinc-500 italic">
-                        Uploading...
-                      </div>
-                    )}
+                    {uploading && <BraiinLoader label="Uploading..." size="sm" variant="inline" />}
                     {attachments.length > 0 && (
                       <div className="grid grid-cols-3 gap-2">
                         {attachments.map((a, i) => (
@@ -370,5 +366,5 @@ export function ChangeRequestWidget() {
   );
 }
 
-// Re-export the pill class so consumer pages can match the visual.
-export const CHANGE_REQUEST_PILL_SM = PILL_SM;
+// Re-export for callers that already imported the legacy name.
+export { PILL_SM as CHANGE_REQUEST_PILL_SM };

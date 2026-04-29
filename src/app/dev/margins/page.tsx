@@ -52,9 +52,8 @@ import {
 } from "lucide-react";
 import { downloadCsv, parseCsv, serializeCsv, type CsvRow } from "@/lib/csv";
 import { CHARGE_CODES } from "@/lib/quotes/charge-codes-data";
-
-const PILL_SM =
-  "text-[10px] px-1.5 py-0 leading-[18px] h-[18px] font-normal tracking-normal";
+import { PILL_SM } from "@/lib/ui-constants";
+import { BraiinLoader } from "@/components/braiin-loader";
 
 // ============================================================
 // Types
@@ -1723,8 +1722,13 @@ export default function MarginsPage() {
   const [view, setView] = useState<"matrix" | "list">("matrix");
   const [query, setQuery] = useState("");
 
-  // Mutable state - edits persist within session.
-  const [rules, setRules] = useState<MarginRule[]>(RULES);
+  // Live state. Empty until first fetch resolves; the BraiinLoader covers
+  // the gap. RULES seed is used ONLY if the API genuinely returns zero rules
+  // (a missing migration) - we surface that as an error so the operator
+  // knows the displayed data is fallback data.
+  const [rules, setRules] = useState<MarginRule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ draft: MarginRule; isNew: boolean } | null>(
     null,
   );
@@ -1732,41 +1736,61 @@ export default function MarginsPage() {
   const [testOpen, setTestOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch live rules on mount; fall back to RULES seed on failure.
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setError(null);
     fetch("/api/margin-rules")
-      .then((r) => r.json())
-      .then((data: { rules?: MarginRule[] }) => {
-        if (cancelled) return;
-        if (data.rules && data.rules.length > 0) setRules(data.rules);
+      .then(async (r) => {
+        const data = (await r.json()) as { rules?: MarginRule[]; error?: string };
+        if (!r.ok) throw new Error(data.error ?? `Load failed (${r.status})`);
+        return data;
       })
-      .catch(() => {});
+      .then((data) => {
+        if (cancelled) return;
+        const list = data.rules ?? [];
+        if (list.length === 0) {
+          setRules(RULES);
+          setError(
+            "Margin rules table is empty - showing seed data. Apply migration 040 + populate quotes.margin_rules.",
+          );
+        } else {
+          setRules(list);
+        }
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Load failed");
+        setRules(RULES);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  function persistOne(rule: MarginRule) {
-    return fetch("/api/margin-rules", {
-      method: "POST",
+  async function callApi(method: string, body: unknown): Promise<void> {
+    const r = await fetch("/api/margin-rules", {
+      method,
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(rule),
+      body: JSON.stringify(body),
     });
+    if (!r.ok) {
+      const data = (await r.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error ?? `${method} failed (${r.status})`);
+    }
   }
-  function persistDelete(ruleId: string) {
-    return fetch("/api/margin-rules", {
-      method: "DELETE",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ruleId }),
-    });
+
+  async function persistOne(rule: MarginRule) {
+    return callApi("POST", rule);
   }
-  function persistBulk(rules: MarginRule[]) {
-    return fetch("/api/margin-rules", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ rules }),
-    });
+  async function persistDelete(ruleId: string) {
+    return callApi("DELETE", { ruleId });
+  }
+  async function persistBulk(rules: MarginRule[]) {
+    return callApi("PATCH", { rules });
   }
 
   function handleTemplate() {
@@ -1814,7 +1838,9 @@ export default function MarginsPage() {
       }
       return Array.from(map.values());
     });
-    persistBulk(rows).catch(() => {});
+    persistBulk(rows).catch((e: unknown) => {
+      setError(e instanceof Error ? `Bulk import failed: ${e.message}` : "Bulk import failed");
+    });
   }
 
   function saveRule(next: MarginRule) {
@@ -1833,12 +1859,16 @@ export default function MarginsPage() {
     // DB-side: rule_id is a UUID column; pass empty string for new rules
     // so the row is generated server-side, then we'll re-fetch on the
     // next mount to get the canonical id. This keeps the UI snappy.
-    persistOne(next.ruleId ? next : { ...next, ruleId: "" }).catch(() => {});
+    persistOne(next.ruleId ? next : { ...next, ruleId: "" }).catch((e: unknown) => {
+      setError(e instanceof Error ? `Save failed: ${e.message}` : "Save failed");
+    });
   }
 
   function deleteRule(ruleId: string) {
     setRules((prev) => prev.filter((r) => r.ruleId !== ruleId));
-    persistDelete(ruleId).catch(() => {});
+    persistDelete(ruleId).catch((e: unknown) => {
+      setError(e instanceof Error ? `Delete failed: ${e.message}` : "Delete failed");
+    });
   }
 
   const sortedRules = useMemo(
@@ -1950,6 +1980,19 @@ export default function MarginsPage() {
         </div>
 
         <div className="max-w-[1600px] mx-auto px-6 py-6 space-y-6">
+          {error && (
+            <div className="border border-rose-300 bg-rose-50 text-rose-800 text-xs px-3 py-2 rounded flex items-start gap-2">
+              <AlertTriangle className="size-3.5 shrink-0 mt-0.5" />
+              <div className="flex-1">{error}</div>
+              <button
+                onClick={() => setError(null)}
+                className="text-rose-700 hover:text-rose-900 text-[11px] underline"
+              >
+                dismiss
+              </button>
+            </div>
+          )}
+          {loading && <BraiinLoader label="Loading margin rules..." />}
           {/* Intro card */}
           <Card className="border-violet-200 bg-violet-50/40">
             <CardContent className="py-4 px-5 flex items-start gap-3">
@@ -2220,7 +2263,7 @@ export default function MarginsPage() {
                               </span>
                             </div>
                           ) : (
-                            <span className="text-[10px] text-zinc-400">—</span>
+                            <span className="text-[10px] text-zinc-400">-</span>
                           )}
                         </TableCell>
                       </TableRow>

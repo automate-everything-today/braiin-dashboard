@@ -18,8 +18,19 @@
 
 export type CsvRow = Record<string, string>;
 
+// Cap on parsed input size. CSV import is exposed via authenticated routes
+// (charge-codes / margin-rules) but a single multi-MB upload still costs
+// CPU + memory; this guard fails loud rather than letting one upload pin
+// the runtime.
+const MAX_INPUT_BYTES = 5 * 1024 * 1024;
+
 export function parseCsv(input: string): CsvRow[] {
-  // Strip BOM
+  if (input.length > MAX_INPUT_BYTES) {
+    throw new Error(
+      `CSV input too large: ${input.length} bytes (max ${MAX_INPUT_BYTES}).`,
+    );
+  }
+  // Strip BOM. Use the explicit codepoint so the source stays readable.
   const text = input.replace(/^﻿/, "");
   const records: string[][] = [];
 
@@ -95,11 +106,20 @@ export function parseCsv(input: string): CsvRow[] {
   return out;
 }
 
+// Excel / Sheets evaluate any cell starting with =, +, -, @, tab, or CR as
+// a formula. A maliciously named charge code starting with `=cmd|...` could
+// achieve RCE on the analyst's machine when the CSV is opened. Prefix a
+// single quote to neutralise without losing the literal value.
+function neutraliseFormula(v: string): string {
+  return /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
+}
+
 function quoteCell(v: string): string {
-  if (v.includes(",") || v.includes("\n") || v.includes('"')) {
-    return `"${v.replace(/"/g, '""')}"`;
+  const safe = neutraliseFormula(v);
+  if (safe.includes(",") || safe.includes("\n") || safe.includes('"')) {
+    return `"${safe.replace(/"/g, '""')}"`;
   }
-  return v;
+  return safe;
 }
 
 export function serializeCsv(headers: string[], rows: CsvRow[]): string {
