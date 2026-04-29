@@ -329,7 +329,7 @@ function Inner() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-6 space-y-6 w-full">
       <div>
         <h1 className="text-2xl font-semibold">Event follow-ups</h1>
         <p className="text-sm text-zinc-500 mt-1">
@@ -476,19 +476,29 @@ function Inner() {
                 <TableRow>
                   <TableHead className="w-44">Name</TableHead>
                   <TableHead>Company</TableHead>
-                  <TableHead className="w-16">Tier</TableHead>
-                  <TableHead className="w-32">Met by</TableHead>
-                  <TableHead className="w-32">Status</TableHead>
-                  <TableHead className="w-40">Engagement</TableHead>
+                  <TableHead className="w-24">Country</TableHead>
+                  <TableHead className="w-12">Tier</TableHead>
+                  <TableHead className="w-36">Met by</TableHead>
+                  <TableHead className="w-28">Status</TableHead>
+                  <TableHead>Notes preview</TableHead>
                   <TableHead className="w-44 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered.map((c) => {
                   const isExpanded = expandedId === c.id;
-                  const repFirst = c.send_from_email
-                    ? c.send_from_email.split("@")[0].split(".")[0]
-                    : c.met_by?.[0]?.split("@")[0].split(".")[0] ?? "—";
+                  const metByList = (c.met_by ?? []).map((v) => {
+                    if (v === "Rob" || v === "Sam" || v === "Bruna") return v;
+                    if (v === "GKF Directory") return "GKF dir";
+                    if (v === "Business Card") return "Card";
+                    if (v.includes("@")) return v.split("@")[0].split(".")[0];
+                    return v;
+                  });
+                  const notesPreview = c.meeting_notes
+                    ? c.meeting_notes.length > 80
+                      ? c.meeting_notes.slice(0, 80) + "..."
+                      : c.meeting_notes
+                    : null;
                   return (
                     <>
                       <TableRow
@@ -496,25 +506,51 @@ function Inner() {
                         onClick={() => setExpandedId(isExpanded ? null : c.id)}
                         className="cursor-pointer"
                       >
-                        <TableCell className="font-medium">
-                          {c.name ?? c.email}
+                        <TableCell className="font-medium align-top">
+                          <div>{c.name ?? c.email}</div>
+                          {c.title && (
+                            <div className="text-xs text-zinc-500 mt-0.5">{c.title}</div>
+                          )}
                         </TableCell>
-                        <TableCell className="text-sm">{c.company ?? "—"}</TableCell>
-                        <TableCell>
+                        <TableCell className="text-sm align-top">{c.company ?? "—"}</TableCell>
+                        <TableCell className="text-sm align-top">{c.country ?? "—"}</TableCell>
+                        <TableCell className="align-top">
                           {c.tier ? (
                             <Badge className="bg-zinc-200 text-zinc-800">{c.tier}</Badge>
                           ) : (
                             <span className="text-zinc-400 text-sm">—</span>
                           )}
                         </TableCell>
-                        <TableCell className="text-sm capitalize">{repFirst}</TableCell>
-                        <TableCell>
+                        <TableCell className="text-xs align-top">
+                          {metByList.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {metByList.map((m, i) => (
+                                <span
+                                  key={i}
+                                  className="px-1.5 py-0.5 bg-zinc-100 rounded text-zinc-700"
+                                >
+                                  {m}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-zinc-400">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="align-top">
                           <Badge className={STATUS_TONE[c.follow_up_status] ?? "bg-zinc-100"}>
                             {c.follow_up_status}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-xs text-zinc-600">
-                          {c.engagement_summary ?? (c.last_inbound_at ? "had inbound" : "—")}
+                        <TableCell className="text-xs text-zinc-600 align-top max-w-xs">
+                          {notesPreview ?? (
+                            <span className="text-zinc-400 italic">no notes</span>
+                          )}
+                          {c.engagement_summary && (
+                            <div className="text-[10px] text-blue-700 mt-0.5">
+                              {c.engagement_summary}
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
@@ -550,7 +586,7 @@ function Inner() {
                       </TableRow>
                       {isExpanded && (
                         <TableRow>
-                          <TableCell colSpan={7} className="bg-zinc-50">
+                          <TableCell colSpan={8} className="bg-zinc-50">
                             <ExpandedDraft
                               contact={c}
                               onSave={saveDraftEdit}
@@ -700,11 +736,11 @@ function ExpandedDraft({
   const draftBusy = busyAction === `draft-one-${contact.id}` || busyAction === `feedback-${contact.id}`;
 
   return (
-    <div className="p-4 space-y-4">
-      {/* === CONTACT CONTEXT PANEL === */}
-      <div className="bg-white border rounded-md p-3 space-y-3">
-        <div className="flex items-baseline justify-between">
-          <h4 className="text-sm font-semibold">Contact context</h4>
+    <div className="p-4 space-y-6 w-full">
+      {/* === CONTACT CONTEXT (no inner card - flat layout for max width) === */}
+      <div className="space-y-3">
+        <div className="flex items-baseline justify-between border-b pb-2">
+          <h4 className="text-sm font-semibold uppercase tracking-wide">Contact context</h4>
           <span className="text-xs text-zinc-500">{contact.email}</span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
@@ -779,7 +815,7 @@ function ExpandedDraft({
 
         {/* Meeting notes editor */}
         <div>
-          <label className="text-xs uppercase tracking-wide text-zinc-500">
+          <label className="block text-xs uppercase tracking-wide text-zinc-500">
             Meeting notes (what was discussed - the AI uses this verbatim)
           </label>
           <textarea
@@ -798,7 +834,7 @@ function ExpandedDraft({
 
         {/* Company info editor */}
         <div>
-          <label className="text-xs uppercase tracking-wide text-zinc-500">
+          <label className="block text-xs uppercase tracking-wide text-zinc-500">
             Company info (background, used by AI for awareness)
           </label>
           <textarea
@@ -816,8 +852,11 @@ function ExpandedDraft({
         </div>
       </div>
 
-      {/* === SENDER + DRAFT === */}
-      <div className="bg-white border rounded-md p-3 space-y-3">
+      {/* === SENDER + DRAFT (flat) === */}
+      <div className="space-y-3">
+        <div className="border-b pb-2">
+          <h4 className="text-sm font-semibold uppercase tracking-wide">Draft</h4>
+        </div>
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <span className="text-xs uppercase tracking-wide text-zinc-500">Send from</span>
           <select
@@ -846,7 +885,7 @@ function ExpandedDraft({
         ) : (
           <>
             <div>
-              <label className="text-xs uppercase tracking-wide text-zinc-500">Subject</label>
+              <label className="block text-xs uppercase tracking-wide text-zinc-500">Subject</label>
               <input
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
@@ -854,7 +893,7 @@ function ExpandedDraft({
               />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wide text-zinc-500">Body</label>
+              <label className="block text-xs uppercase tracking-wide text-zinc-500">Body</label>
               <textarea
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
@@ -882,7 +921,7 @@ function ExpandedDraft({
 
             {/* Feedback to AI */}
             <div className="border-t pt-3">
-              <label className="text-xs uppercase tracking-wide text-zinc-500">
+              <label className="block text-xs uppercase tracking-wide text-zinc-500">
                 Feedback for the AI (regenerate with these instructions)
               </label>
               <textarea
