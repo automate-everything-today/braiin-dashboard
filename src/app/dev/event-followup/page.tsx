@@ -615,18 +615,21 @@ function Inner() {
               });
               const data = await res.json();
               if (!res.ok) throw new Error(data.error || "Bulk assign failed");
+              const updated = data.updated ?? 0;
+              const merged = data.merged_away ?? 0;
               const failedCount = data.failed_count ?? 0;
+              const parts: string[] = [`Assigned ${updated} contacts.`];
+              if (merged > 0) {
+                parts.push(`${merged} merged into existing colleagues.`);
+              }
               if (failedCount > 0) {
                 const reasons = (data.failed as Array<{ id: number; reason: string }> | undefined)
                   ?.slice(0, 3)
                   .map((f) => `#${f.id}: ${f.reason}`)
                   .join("; ");
-                setActionResult(
-                  `Assigned ${data.updated} contacts. ${failedCount} failed${reasons ? ` (${reasons}${failedCount > 3 ? `, +${failedCount - 3} more` : ""})` : ""}.`,
-                );
-              } else {
-                setActionResult(`Assigned ${data.updated} contacts to event.`);
+                parts.push(`${failedCount} failed${reasons ? ` (${reasons}${failedCount > 3 ? `, +${failedCount - 3} more` : ""})` : ""}.`);
               }
+              setActionResult(parts.join(" "));
               await loadNeedsAttention();
               if (selectedEventId) await loadContacts(selectedEventId);
               await loadEvents();

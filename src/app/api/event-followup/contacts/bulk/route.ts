@@ -62,8 +62,15 @@ export async function POST(req: Request) {
   // Per-row updates so unique-constraint collisions on (email, event_id)
   // (e.g. two Airtable contacts sharing an info@company.com mailbox both
   // targeted at the same event) only fail the offending row, not the whole
-  // batch. Postgres rejects a whole UPDATE...IN if any row would violate.
+  // batch.
+  //
+  // Collision recovery: when a needs_attention row's email is already
+  // represented at the target event, the existing row WINS - we delete
+  // the duplicate needs_attention entry rather than fail. The operator
+  // gets a clean bulk-assign that drains the pile, with a count of how
+  // many rows were merged-away vs newly assigned.
   const updatedIds: number[] = [];
+  const mergedAwayIds: number[] = [];
   const failed: Array<{ id: number; reason: string }> = [];
 
   for (const id of ids) {
@@ -71,22 +78,32 @@ export async function POST(req: Request) {
       .from("event_contacts")
       .update(payload)
       .eq("id", id);
-    if (error) {
-      failed.push({
-        id,
-        reason: error.message.includes("event_contacts_email_event_uniq")
-          ? "Email already used at this event (likely a colleague at the same company)"
-          : error.message,
-      });
-    } else {
+    if (!error) {
       updatedIds.push(id);
+      continue;
     }
+    if (error.message.includes("event_contacts_email_event_uniq")) {
+      // Email already represented at the target event: drop the duplicate.
+      const { error: delErr } = await supabase
+        .from("event_contacts")
+        .delete()
+        .eq("id", id);
+      if (delErr) {
+        failed.push({ id, reason: `Could not merge-delete duplicate: ${delErr.message}` });
+      } else {
+        mergedAwayIds.push(id);
+      }
+      continue;
+    }
+    failed.push({ id, reason: error.message });
   }
 
   return apiResponse({
     updated: updatedIds.length,
+    merged_away: mergedAwayIds.length,
     failed_count: failed.length,
     failed,
     ids: updatedIds,
+    merged_away_ids: mergedAwayIds,
   });
 }
