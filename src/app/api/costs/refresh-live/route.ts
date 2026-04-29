@@ -9,6 +9,7 @@ import { requireSuperAdmin } from "@/lib/api-auth";
 import { getOrgId } from "@/lib/org";
 import { fetchAnthropicUsage } from "@/lib/costs/sources/anthropic";
 import { fetchVercelUsage } from "@/lib/costs/sources/vercel";
+import { fetchSupabaseUsage } from "@/lib/costs/sources/supabase";
 import type { CostSource } from "@/lib/costs/types";
 import type { FetchResult } from "@/lib/costs/sources/vercel";
 
@@ -20,6 +21,7 @@ const db = supabase as unknown as { schema: (s: string) => any };
 const FETCHERS: Record<string, (s: CostSource) => Promise<FetchResult>> = {
   anthropic: fetchAnthropicUsage,
   vercel: fetchVercelUsage,
+  supabase: fetchSupabaseUsage,
 };
 
 export async function POST() {

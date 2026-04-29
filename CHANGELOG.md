@@ -4,6 +4,11 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### Costs dashboard - Supabase fetcher (token verification only)
+
+- **`src/lib/costs/sources/supabase.ts`** rewritten after live testing of the Supabase Management API. Probed endpoints `/v1/projects/{ref}/usage`, `/v1/organizations/{slug}/usage`, and `/v1/organizations/{slug}/billing/subscription` - all return 404 in the current API. Usage/billing data is dashboard-only as of 2026-04-29. The fetcher now does a token + project-ref validity check (hits `/v1/projects/{ref}` so a rotated token gets a fast green light) and returns a clear "use Close month modal" message. Swap in the real fetch + insert when Supabase ships a usage endpoint.
+- **Refresh-live** still routes Supabase through the fetcher so the operator sees confirmation that the token is alive, even though no entries land.
+
 ### Costs dashboard - monthly close workflow
 
 - **`/api/cron/close-month-recurring` route** - runs at 09:00 UTC on the 1st of every month (per `vercel.json`). Iterates every active org, auto-creates cost entries for the prior month for every cost_source where `recurring_monthly` is set (Claude MAX, Cursor, GitHub paid plans, domains), creates one task in `public.tasks` for the org's super_admin reminding them to fill the variable-cost manual sources, and writes a `feedback.build_log` entry so the timeline shows the cron firing. Idempotent on (source_id, period, period_type) so retries are safe.
