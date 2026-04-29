@@ -45,4 +45,23 @@ describe("system_rules Zod schemas", () => {
       include_country_hook: false,
     })).toBeTruthy();
   });
+
+  it("baselineTemplateSchema requires country_hook_template when include_country_hook is true", () => {
+    expect(() => baselineTemplateSchema.parse({
+      greeting: "Hi {first_name}",
+      ask: "Send any active lanes through.",
+      signoff: "Best regards",
+      length_cap_lines: 4,
+      include_country_hook: true,  // ON but no template
+    })).toThrow(/country_hook_template/);
+
+    expect(baselineTemplateSchema.parse({
+      greeting: "Hi {first_name}",
+      ask: "Send any active lanes through.",
+      signoff: "Best regards",
+      length_cap_lines: 4,
+      include_country_hook: true,
+      country_hook_template: "{country} is one of our active lanes.",
+    })).toBeTruthy();
+  });
 });

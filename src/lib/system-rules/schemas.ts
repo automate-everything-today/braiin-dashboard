@@ -30,7 +30,10 @@ export const baselineTemplateSchema = z.object({
   length_cap_lines: z.number().int().min(1).max(20),
   include_country_hook: z.boolean(),
   country_hook_template: z.string().optional(),
-});
+}).refine(
+  (d) => !d.include_country_hook || (d.country_hook_template !== undefined && d.country_hook_template.length > 0),
+  "country_hook_template is required when include_country_hook is true",
+);
 
 export const SCHEMA_BY_CATEGORY = {
   seniority_score: seniorityScoreSchema,
