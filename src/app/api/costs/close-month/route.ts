@@ -15,6 +15,7 @@ import { supabase } from "@/services/base";
 import { requireSuperAdmin } from "@/lib/api-auth";
 import { getOrgId } from "@/lib/org";
 import { convertToGbp } from "@/lib/costs/fx";
+import { logSuperAdminAction } from "@/lib/security/log";
 import type { CostSource, CostEntry } from "@/lib/costs/types";
 
 const ROUTE = "/api/costs/close-month";
@@ -126,6 +127,11 @@ export async function POST(req: Request) {
   }
   const range = monthRange(parsed.data.period);
   const orgId = getOrgId();
+  void logSuperAdminAction({
+    route: ROUTE, action: "close_month_batch", method: "POST",
+    user_email: auth.session.email,
+    details: { period: parsed.data.period, item_count: parsed.data.items.length },
+  });
   const inserted: string[] = [];
   const errors: Array<{ source_id: string; error: string }> = [];
 

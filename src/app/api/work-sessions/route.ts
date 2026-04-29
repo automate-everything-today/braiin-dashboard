@@ -4,6 +4,7 @@ import { z } from "zod";
 import { supabase } from "@/services/base";
 import { requireSuperAdmin } from "@/lib/api-auth";
 import { getOrgId } from "@/lib/org";
+import { logSuperAdminAction } from "@/lib/security/log";
 
 const ROUTE = "/api/work-sessions";
 
@@ -40,6 +41,11 @@ export async function POST(req: Request) {
     return Response.json({ error: "Invalid input", issues: parsed.error.issues }, { status: 400 });
   }
   const body = parsed.data;
+  void logSuperAdminAction({
+    route: ROUTE, action: "create_work_session", method: "POST",
+    user_email: auth.session.email,
+    details: { project: body.project, source: body.source },
+  });
   const { data, error } = await db
     .schema("feedback")
     .from("work_sessions")

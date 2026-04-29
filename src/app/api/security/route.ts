@@ -16,6 +16,7 @@ import { z } from "zod";
 import { supabase } from "@/services/base";
 import { requireSuperAdmin } from "@/lib/api-auth";
 import { getOrgId } from "@/lib/org";
+import { logSuperAdminAction } from "@/lib/security/log";
 
 const ROUTE = "/api/security";
 
@@ -238,6 +239,14 @@ export async function PATCH(req: Request) {
     return Response.json({ error: "Invalid input", issues: parsed.error.issues }, { status: 400 });
   }
   const body = parsed.data;
+
+  void logSuperAdminAction({
+    route: ROUTE,
+    action: `transition_finding:${body.status}`,
+    method: "PATCH",
+    user_email: auth.session.email,
+    details: { finding_id: body.finding_id, to_status: body.status },
+  });
 
   // Fetch existing for audit trail entry.
   const { data: existing, error: fetchErr } = await db

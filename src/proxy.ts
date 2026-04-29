@@ -73,6 +73,18 @@ export async function proxy(req: NextRequest) {
   // would block its own callback into the dashboard.
   if (pathname === "/api/security/proxy-event") return NextResponse.next();
 
+  // Honeypot routes - allowlisted so scanners reach them and trigger the
+  // honeypot_hit logger. The handlers return convincing-but-fake data so
+  // automated scanners stay engaged. Each hit fires a HIGH security_event
+  // which the 5-min alert cron sends to Telegram.
+  if (
+    pathname === "/api/admin/dump-tokens" ||
+    pathname === "/api/admin/env" ||
+    pathname === "/api/internal/users"
+  ) {
+    return NextResponse.next();
+  }
+
   const cookie = req.cookies.get(SESSION_COOKIE_NAME);
   if (!cookie?.value) {
     void logProxyEvent(req, "auth_failure", "no_cookie", "medium");

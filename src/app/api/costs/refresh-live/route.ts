@@ -10,6 +10,7 @@ import { getOrgId } from "@/lib/org";
 import { fetchAnthropicUsage } from "@/lib/costs/sources/anthropic";
 import { fetchVercelUsage } from "@/lib/costs/sources/vercel";
 import { fetchSupabaseUsage } from "@/lib/costs/sources/supabase";
+import { logSuperAdminAction } from "@/lib/security/log";
 import type { CostSource } from "@/lib/costs/types";
 import type { FetchResult } from "@/lib/costs/sources/vercel";
 
@@ -27,6 +28,11 @@ const FETCHERS: Record<string, (s: CostSource) => Promise<FetchResult>> = {
 export async function POST() {
   const auth = await requireSuperAdmin(ROUTE);
   if (!auth.ok) return auth.response;
+
+  void logSuperAdminAction({
+    route: ROUTE, action: "refresh_live_costs", method: "POST",
+    user_email: auth.session.email,
+  });
 
   const { data, error } = await db
     .schema("feedback")

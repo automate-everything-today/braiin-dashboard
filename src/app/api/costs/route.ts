@@ -13,6 +13,7 @@ import { supabase } from "@/services/base";
 import { requireSuperAdmin } from "@/lib/api-auth";
 import { getOrgId } from "@/lib/org";
 import { convertToGbp } from "@/lib/costs/fx";
+import { logSuperAdminAction } from "@/lib/security/log";
 import { aggregateBySource, calendarDaysOfWork } from "@/lib/costs/aggregations";
 import { calculateCounterfactual } from "@/lib/costs/counterfactual";
 import type {
@@ -118,6 +119,13 @@ export async function POST(req: Request) {
     return Response.json({ error: "Invalid input", issues: parsed.error.issues }, { status: 400 });
   }
   const body = parsed.data;
+  void logSuperAdminAction({
+    route: ROUTE,
+    action: "create_cost_entry",
+    method: "POST",
+    user_email: auth.session.email,
+    details: { source_id: body.source_id, period: `${body.period_start}->${body.period_end}`, amount: body.amount, currency: body.currency },
+  });
   const fx = await convertToGbp(body.amount, body.currency, body.period_start);
 
   const { data, error } = await db
@@ -158,6 +166,13 @@ export async function DELETE(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "entry_id required" }, { status: 400 });
   }
+  void logSuperAdminAction({
+    route: ROUTE,
+    action: "delete_cost_entry",
+    method: "DELETE",
+    user_email: auth.session.email,
+    details: { entry_id: parsed.data.entry_id },
+  });
   const { error } = await db
     .schema("feedback")
     .from("cost_entries")

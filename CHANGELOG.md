@@ -4,6 +4,14 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### Security - audit trail + honeypots (Phase 3 + 4)
+
+- **Migration `053_security_events_audit_types.sql`** - extends event_type CHECK constraint with `super_admin_action` (Phase 3) and `honeypot_hit` (Phase 4). Idempotent via DROP+ADD; applied via Management API on first run.
+- **`logSuperAdminAction()` in `src/lib/security/log.ts`** - dual-writes to `feedback.security_events` (LOW severity, surfaces in /dev/security stream) AND `feedback.build_log` (item_type=chore, area=audit, surfaces in /dev/build-log timeline). Wired into every super_admin mutation route: security PATCH (transition_finding), costs POST/DELETE, sources POST/PATCH/DELETE, close-month POST, refresh-live POST, work-sessions POST, roadmap POST/PATCH/DELETE. Captures action label, method, user_email, and a small details JSONB so the audit trail tells you exactly which finding got resolved, which source was tweaked, which roadmap node was edited.
+- **`logHoneypotHit()` + `src/lib/security/honeypot.ts`** - dual-writes (security_events HIGH + build_log entry tagged "honeypot/intrusion-attempt"). HIGH severity means the 5-min alert cron fires an immediate Telegram per hit. Captures IP, user-agent, method, URL+query, referrer, cookie-presence so the trace identifies the scanner.
+- **Three honeypot routes:** `/api/admin/dump-tokens` (returns plausible-looking fake AWS+Stripe creds JSON), `/api/admin/env` (serves a fake .env file with bait values), `/api/internal/users` (fake user list). All return 200 (not 401) so scanners stay engaged. Allowlisted in `src/proxy.ts` so the proxy doesn't block them before the honeypot fires.
+- **`logBuildEntry()` helper** also extracted in `src/lib/security/log.ts` for general best-effort timeline writes (currently used by the audit + honeypot helpers; available to anything else that wants to drop a chore entry).
+
 ### Security monitoring - intrusion detection + Telegram alerts
 
 - **`src/lib/security/notify.ts`** - Telegram send helper using the existing `@bobbadobbabot` bot. `sendTelegram()` is best-effort (never throws). `formatSecurityAlert()` renders a security_event into a Markdown message with severity emoji and a /dev/security link. `hmacSign` / `hmacVerify` use Web Crypto so the same code runs in both edge (proxy.ts) and node (route handler) runtimes.

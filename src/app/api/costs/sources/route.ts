@@ -4,6 +4,7 @@ import { z } from "zod";
 import { supabase } from "@/services/base";
 import { requireSuperAdmin } from "@/lib/api-auth";
 import { getOrgId } from "@/lib/org";
+import { logSuperAdminAction } from "@/lib/security/log";
 
 const ROUTE = "/api/costs/sources";
 
@@ -57,6 +58,11 @@ export async function POST(req: Request) {
     .select()
     .single();
   if (error) return Response.json({ error: error.message }, { status: 500 });
+  void logSuperAdminAction({
+    route: ROUTE, action: "upsert_cost_source", method: "POST",
+    user_email: auth.session.email,
+    details: { name: body.name, vendor: body.vendor, category: body.category },
+  });
   return Response.json({ source: data });
 }
 
@@ -91,6 +97,11 @@ export async function PATCH(req: Request) {
     .select()
     .single();
   if (error) return Response.json({ error: error.message }, { status: 500 });
+  void logSuperAdminAction({
+    route: ROUTE, action: "patch_cost_source", method: "PATCH",
+    user_email: auth.session.email,
+    details: { source_id: body.source_id, updates: Object.keys(updates) },
+  });
   return Response.json({ source: data });
 }
 
@@ -101,6 +112,11 @@ export async function DELETE(req: Request) {
   if (!auth.ok) return auth.response;
   const parsed = deleteSchema.safeParse(await req.json());
   if (!parsed.success) return Response.json({ error: "source_id required" }, { status: 400 });
+  void logSuperAdminAction({
+    route: ROUTE, action: "delete_cost_source", method: "DELETE",
+    user_email: auth.session.email,
+    details: { source_id: parsed.data.source_id },
+  });
   const { error } = await db
     .schema("feedback")
     .from("cost_sources")

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { supabase } from "@/services/base";
 import { requireSuperAdmin } from "@/lib/api-auth";
 import { getOrgId } from "@/lib/org";
+import { logSuperAdminAction } from "@/lib/security/log";
 
 const ROUTE = "/api/roadmap";
 
@@ -67,6 +68,11 @@ export async function POST(req: Request) {
     return Response.json({ error: "Invalid input", issues: parsed.error.issues }, { status: 400 });
   }
   const body = parsed.data;
+  void logSuperAdminAction({
+    route: ROUTE, action: "create_roadmap_node", method: "POST",
+    user_email: auth.session.email,
+    details: { title: body.title.slice(0, 80), parent_id: body.parent_id ?? null },
+  });
   const { data, error } = await db
     .schema("feedback")
     .from("roadmap_nodes")
@@ -114,6 +120,11 @@ export async function PATCH(req: Request) {
     const value = body[k];
     if (value !== undefined) updates[k] = value;
   }
+  void logSuperAdminAction({
+    route: ROUTE, action: "patch_roadmap_node", method: "PATCH",
+    user_email: auth.session.email,
+    details: { node_id: body.node_id, updated_keys: Object.keys(updates) },
+  });
   const { data, error } = await db
     .schema("feedback")
     .from("roadmap_nodes")
@@ -134,6 +145,11 @@ export async function DELETE(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "node_id required" }, { status: 400 });
   }
+  void logSuperAdminAction({
+    route: ROUTE, action: "delete_roadmap_node", method: "DELETE",
+    user_email: auth.session.email,
+    details: { node_id: parsed.data.node_id },
+  });
   const { error } = await db
     .schema("feedback")
     .from("roadmap_nodes")
