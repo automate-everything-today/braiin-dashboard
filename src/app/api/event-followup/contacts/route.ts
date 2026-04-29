@@ -45,17 +45,30 @@ export async function GET(req: Request) {
   const eventId = parseInt(url.searchParams.get("event_id") || "0", 10);
   if (!eventId) return apiError("event_id required", 400);
 
-  const { data, error } = await supabase
-    .from("event_contacts")
-    .select(
-      "id, email, name, company, country, region, tier, met_by, follow_up_status, draft_subject, draft_body, send_from_email, engagement_summary, last_inbound_at, sent_at, sent_message_id, replied_at, bounced_at, bounce_reason, events(id, name)",
-    )
-    .eq("event_id", eventId)
-    .order("tier", { ascending: true, nullsFirst: false })
-    .order("name", { ascending: true });
-  if (error) return apiError(error.message, 500);
+  // Two queries instead of FK-joined select. See import/route.ts comment.
+  const [contactsRes, eventRes] = await Promise.all([
+    supabase
+      .from("event_contacts")
+      .select(
+        "id, email, name, company, country, region, tier, met_by, follow_up_status, draft_subject, draft_body, send_from_email, engagement_summary, last_inbound_at, sent_at, sent_message_id, replied_at, bounced_at, bounce_reason, event_id",
+      )
+      .eq("event_id", eventId)
+      .order("tier", { ascending: true, nullsFirst: false })
+      .order("name", { ascending: true }),
+    supabase.from("events").select("id, name").eq("id", eventId).maybeSingle(),
+  ]);
+  if (contactsRes.error) return apiError(contactsRes.error.message, 500);
+  if (eventRes.error) return apiError(eventRes.error.message, 500);
 
-  return apiResponse({ contacts: data ?? [] });
+  const eventInfo = eventRes.data
+    ? (eventRes.data as { id: number; name: string })
+    : null;
+  const contacts = (contactsRes.data ?? []).map((c) => ({
+    ...c,
+    events: eventInfo,
+  }));
+
+  return apiResponse({ contacts });
 }
 
 export async function PATCH(req: Request) {

@@ -52,8 +52,12 @@ export async function GET(req: Request) {
 
   let query = supabase.from("voice_rules").select("*");
   if (!includeInactive) query = query.eq("active", true);
-  if (ruleType) query = query.eq("rule_type", ruleType);
-  if (channel) query = query.eq("channel", channel);
+  if (ruleType && (RULE_TYPES as readonly string[]).includes(ruleType)) {
+    query = query.eq("rule_type", ruleType as (typeof RULE_TYPES)[number]);
+  }
+  if (channel && (CHANNELS as readonly string[]).includes(channel)) {
+    query = query.eq("channel", channel as (typeof CHANNELS)[number]);
+  }
 
   const { data, error } = await query
     .order("rule_type", { ascending: true })

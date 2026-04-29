@@ -157,10 +157,13 @@ export async function recordCatches(hits: LintHit[]): Promise<void> {
   // once for telemetry purposes (we care about hit-distinct-rules-per-draft,
   // not raw match count).
   const uniqueRuleIds = Array.from(new Set(hits.map((h) => h.rule_id)));
+  // RPC is defined in migration 056 but not in generated types yet.
+  const rpc = supabase.rpc.bind(supabase) as unknown as (
+    fn: string,
+    args: Record<string, unknown>,
+  ) => Promise<unknown>;
   await Promise.all(
-    uniqueRuleIds.map((id) =>
-      supabase.rpc("voice_rules_record_catch", { rule_id: id }),
-    ),
+    uniqueRuleIds.map((id) => rpc("voice_rules_record_catch", { rule_id: id })),
   );
 }
 

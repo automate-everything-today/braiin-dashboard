@@ -304,6 +304,258 @@ export type Database = {
         };
         Relationships: [];
       };
+      // Migration: 056_voice_rules.sql
+      voice_rules: {
+        Row: {
+          id: number;
+          rule_type: "banned_word" | "banned_phrase" | "banned_structure" | "banned_formatting" | "banned_tone";
+          pattern: string;
+          replacement: string;
+          severity: "block" | "warn";
+          channel: "all" | "email" | "messaging" | "social";
+          notes: string | null;
+          added_by: string | null;
+          active: boolean;
+          catch_count: number;
+          last_caught_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          rule_type: "banned_word" | "banned_phrase" | "banned_structure" | "banned_formatting" | "banned_tone";
+          pattern: string;
+          replacement: string;
+          severity?: "block" | "warn";
+          channel?: "all" | "email" | "messaging" | "social";
+          notes?: string | null;
+          added_by?: string | null;
+          active?: boolean;
+          catch_count?: number;
+          last_caught_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: number;
+          rule_type?: "banned_word" | "banned_phrase" | "banned_structure" | "banned_formatting" | "banned_tone";
+          pattern?: string;
+          replacement?: string;
+          severity?: "block" | "warn";
+          channel?: "all" | "email" | "messaging" | "social";
+          notes?: string | null;
+          added_by?: string | null;
+          active?: boolean;
+          catch_count?: number;
+          last_caught_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      // Migration: 058_event_attribution.sql
+      events: {
+        Row: {
+          id: number;
+          name: string;
+          event_type: "trade_show" | "conference" | "network_meeting" | "agm" | "other";
+          start_date: string;
+          end_date: string | null;
+          location: string | null;
+          via_network_id: number | null;
+          cost_gbp: number | null;
+          attendees: string[];
+          notes: string | null;
+          active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          name: string;
+          event_type?: "trade_show" | "conference" | "network_meeting" | "agm" | "other";
+          start_date: string;
+          end_date?: string | null;
+          location?: string | null;
+          via_network_id?: number | null;
+          cost_gbp?: number | null;
+          attendees?: string[];
+          notes?: string | null;
+          active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: number;
+          name?: string;
+          event_type?: "trade_show" | "conference" | "network_meeting" | "agm" | "other";
+          start_date?: string;
+          end_date?: string | null;
+          location?: string | null;
+          via_network_id?: number | null;
+          cost_gbp?: number | null;
+          attendees?: string[];
+          notes?: string | null;
+          active?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      // Migration: 058_event_attribution.sql
+      event_contacts: {
+        Row: {
+          id: number;
+          airtable_record_id: string | null;
+          email: string;
+          name: string | null;
+          title: string | null;
+          company: string | null;
+          phone: string | null;
+          website: string | null;
+          country: string | null;
+          region: string | null;
+          event_id: number | null;
+          attributed_network_id: number | null;
+          meeting_notes: string | null;
+          company_info: string | null;
+          company_type: string | null;
+          met_by: string[];
+          internal_cc: string | null;
+          contact_role: "to" | "cc" | "skip" | null;
+          is_lead_contact: boolean;
+          tier: number | null;
+          follow_up_status:
+            | "pending"
+            | "already_engaged"
+            | "drafted"
+            | "reviewed"
+            | "queued"
+            | "sent"
+            | "replied"
+            | "bounced"
+            | "opted_out"
+            | "cancelled";
+          last_inbound_at: string | null;
+          last_outbound_at: string | null;
+          engagement_summary: string | null;
+          draft_subject: string | null;
+          draft_body: string | null;
+          draft_generated_at: string | null;
+          draft_model: string | null;
+          send_from_email: string | null;
+          sent_at: string | null;
+          sent_message_id: string | null;
+          replied_at: string | null;
+          bounced_at: string | null;
+          bounce_reason: string | null;
+          imported_at: string;
+          imported_from_airtable_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          airtable_record_id?: string | null;
+          email: string;
+          name?: string | null;
+          title?: string | null;
+          company?: string | null;
+          phone?: string | null;
+          website?: string | null;
+          country?: string | null;
+          region?: string | null;
+          event_id?: number | null;
+          attributed_network_id?: number | null;
+          meeting_notes?: string | null;
+          company_info?: string | null;
+          company_type?: string | null;
+          met_by?: string[];
+          internal_cc?: string | null;
+          contact_role?: "to" | "cc" | "skip" | null;
+          is_lead_contact?: boolean;
+          tier?: number | null;
+          follow_up_status?:
+            | "pending"
+            | "already_engaged"
+            | "drafted"
+            | "reviewed"
+            | "queued"
+            | "sent"
+            | "replied"
+            | "bounced"
+            | "opted_out"
+            | "cancelled";
+          last_inbound_at?: string | null;
+          last_outbound_at?: string | null;
+          engagement_summary?: string | null;
+          draft_subject?: string | null;
+          draft_body?: string | null;
+          draft_generated_at?: string | null;
+          draft_model?: string | null;
+          send_from_email?: string | null;
+          sent_at?: string | null;
+          sent_message_id?: string | null;
+          replied_at?: string | null;
+          bounced_at?: string | null;
+          bounce_reason?: string | null;
+          imported_at?: string;
+          imported_from_airtable_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: number;
+          airtable_record_id?: string | null;
+          email?: string;
+          name?: string | null;
+          title?: string | null;
+          company?: string | null;
+          phone?: string | null;
+          website?: string | null;
+          country?: string | null;
+          region?: string | null;
+          event_id?: number | null;
+          attributed_network_id?: number | null;
+          meeting_notes?: string | null;
+          company_info?: string | null;
+          company_type?: string | null;
+          met_by?: string[];
+          internal_cc?: string | null;
+          contact_role?: "to" | "cc" | "skip" | null;
+          is_lead_contact?: boolean;
+          tier?: number | null;
+          follow_up_status?:
+            | "pending"
+            | "already_engaged"
+            | "drafted"
+            | "reviewed"
+            | "queued"
+            | "sent"
+            | "replied"
+            | "bounced"
+            | "opted_out"
+            | "cancelled";
+          last_inbound_at?: string | null;
+          last_outbound_at?: string | null;
+          engagement_summary?: string | null;
+          draft_subject?: string | null;
+          draft_body?: string | null;
+          draft_generated_at?: string | null;
+          draft_model?: string | null;
+          send_from_email?: string | null;
+          sent_at?: string | null;
+          sent_message_id?: string | null;
+          replied_at?: string | null;
+          bounced_at?: string | null;
+          bounce_reason?: string | null;
+          imported_at?: string;
+          imported_from_airtable_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: PublicSchema["Views"];
     Functions: PublicSchema["Functions"];

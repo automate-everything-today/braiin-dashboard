@@ -21,9 +21,9 @@
  */
 
 import { complete } from "@/lib/llm-gateway";
-import { lintDraft, recordCatches, type LintHit } from "@/lib/voice/lint";
+import { lintDraft, recordCatches } from "@/lib/voice/lint";
 import { supabase } from "@/services/base";
-import type { Channel } from "@/lib/voice/types";
+import type { Channel, LintHit } from "@/lib/voice/types";
 
 const DRAFT_MODEL = "claude-sonnet-4-6";
 const MAX_REGENERATE_RETRIES = 2;

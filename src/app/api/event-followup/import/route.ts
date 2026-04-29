@@ -29,25 +29,37 @@ export async function GET(req: Request) {
   const auth = await requireAuth(ROUTE, req);
   if (!auth.ok) return auth.response;
 
-  const { data, error } = await supabase
-    .from("event_contacts")
-    .select("event_id, follow_up_status, events(name)")
-    .order("event_id", { ascending: true });
-  if (error) return apiError(error.message, 500);
+  // Two queries: contact rows + event names. Joining via FK at the PostgREST
+  // layer requires the static relationship to be declared in the generated
+  // types (database.ts), which won't pick up event_contacts -> events until
+  // gen-supabase-types runs. Two queries are simpler and just as fast.
+  const [contactsRes, eventsRes] = await Promise.all([
+    supabase
+      .from("event_contacts")
+      .select("event_id, follow_up_status")
+      .order("event_id", { ascending: true }),
+    supabase.from("events").select("id, name"),
+  ]);
+  if (contactsRes.error) return apiError(contactsRes.error.message, 500);
+  if (eventsRes.error) return apiError(eventsRes.error.message, 500);
+
+  const eventNameById = new Map<number, string>();
+  for (const e of (eventsRes.data ?? []) as Array<{ id: number; name: string }>) {
+    eventNameById.set(e.id, e.name);
+  }
 
   // Reduce to per-event counts grouped by status.
   const summary: Record<
     string,
     { event_id: number; event_name: string; total: number; by_status: Record<string, number> }
   > = {};
-  for (const row of (data ?? []) as Array<{
+  for (const row of (contactsRes.data ?? []) as Array<{
     event_id: number | null;
     follow_up_status: string;
-    events: { name: string } | null;
   }>) {
     if (!row.event_id) continue;
     const key = String(row.event_id);
-    const eventName = row.events?.name ?? "(unknown)";
+    const eventName = eventNameById.get(row.event_id) ?? "(unknown)";
     if (!summary[key]) {
       summary[key] = { event_id: row.event_id, event_name: eventName, total: 0, by_status: {} };
     }

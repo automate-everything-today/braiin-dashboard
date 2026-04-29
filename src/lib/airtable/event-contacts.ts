@@ -300,9 +300,13 @@ async function upsertRows(
   let inserted = 0;
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK);
+    // Type assertion: the runtime rows always have email + event_id (we drop
+    // any without earlier in buildRows). The Insert type is strict so we
+    // assert through the column-permissive shape here.
     const { error, count } = await supabase
       .from("event_contacts")
-      .upsert(chunk, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .upsert(chunk as any, {
         onConflict: "airtable_record_id",
         // We want the import to overwrite Airtable-side fields (name, notes,
         // tier, met_by) but NOT overwrite Braiin-side state (follow_up_status,

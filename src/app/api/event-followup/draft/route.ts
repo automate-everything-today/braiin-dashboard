@@ -53,19 +53,41 @@ interface ContactRow {
   met_by: string[] | null;
   internal_cc: string | null;
   follow_up_status: string;
+  event_id: number | null;
   events: { name: string; location: string | null; start_date: string } | null;
 }
 
 async function loadContact(contactId: number): Promise<ContactRow | null> {
-  const { data, error } = await supabase
+  // Two queries instead of FK-joined select - PostgREST relationship inference
+  // requires the FK to be declared in the generated types. See import/route.ts
+  // for the same pattern.
+  const { data: contact, error } = await supabase
     .from("event_contacts")
     .select(
-      "id, email, name, company, meeting_notes, company_info, met_by, internal_cc, follow_up_status, events(name, location, start_date)",
+      "id, email, name, company, meeting_notes, company_info, met_by, internal_cc, follow_up_status, event_id",
     )
     .eq("id", contactId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return (data ?? null) as ContactRow | null;
+  if (!contact) return null;
+
+  type ContactBase = Omit<ContactRow, "events">;
+  const base = contact as ContactBase;
+  if (!base.event_id) {
+    return { ...base, events: null };
+  }
+
+  const { data: event } = await supabase
+    .from("events")
+    .select("name, location, start_date")
+    .eq("id", base.event_id)
+    .maybeSingle();
+  return {
+    ...base,
+    events: event
+      ? (event as { name: string; location: string | null; start_date: string })
+      : null,
+  };
 }
 
 async function draftOne(contactId: number, force: boolean): Promise<{
