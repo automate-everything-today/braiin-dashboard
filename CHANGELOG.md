@@ -4,6 +4,40 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### Outbound + voice - Wave 4 ROI surface + draft generator iterations
+
+- **Migration 059** - multi-currency on events (cost_amount + cost_currency) and freight_networks (annual_fee_amount + fee_currency). Adds parent_network_id self-FK for sub-network hierarchy with WCA + X2 sub-network seeds. Adds deals.attributed_event_contact_id with auto-link trigger that fires on insert when contact email matches an event_contacts row.
+- **Migration 060** - drops UNIQUE on event_contacts.airtable_record_id (was blocking multi-event-per-contact imports), replaces functional UNIQUE INDEX on (lower(email), event_id) with a regular one on (email, event_id) so PostgREST upsert can target it.
+- **Migration 061** - events.context_brief TEXT column. Operator inputs free-text per-event context from /events form. Loaded into the draft generator system prompt so every email for that event inherits the angle.
+- **Migration 062** - voice_rules entries banning trailing-comma signoffs ('Best regards,' / 'Kind regards,' / 'Regards,' etc.) and hedging phrases ('Apologies for the uncertainty', 'I cannot confirm whether', 'whether we connected at all', 'before diving into specifics').
+- **`src/lib/fx.ts`** - convertToGbp / convertFromGbp / sumInGbp helpers backed by geo.fx_rates with 5min cache + 30-day fallback window.
+- **`/api/events`** - full CRUD with multi-currency + ROI summaries (contacts -> sent -> replied -> deals -> revenue -> cost in GBP -> roi_gbp).
+- **`/events` page** - per-event card grid with ROI bottom-line, edit form with currency picker for cost, via_network selector, context brief textarea.
+- **`/networks` page + /api/networks** - updated to new column names (annual_fee_amount + fee_currency + parent_network_id).
+- **Sidebar nav** - /events added under Clients group (Trophy icon).
+
+### Event follow-up - draft generator iterations (UX feedback)
+
+- **CORTEN_COMPANY_BRIEF** rebuilt in generate-draft.ts: London HQ (registered office N1 8QG, Rob lives in Brighton), founded 2009 by Rob + Sam from container-trading origin, Sunday Times 100 Fastest Growing recognition, #WeGetShipDone tagline, "Helping high-growth brands simplify global logistics" pitch, founding principles (Be genuine / Stay agile / Act with honesty), services (ocean / air / road / rail + real-time tracking + full compliance), differentiators (contracted Asia rates / in-house tech / stable team), networks (WCA + GKF/ULN), UK ports list for lane-anchoring, "what we're not" negative space.
+- **Geographic positioning** locked: UK <-> anywhere + Ireland; trade-show country != business focus; we do NOT pitch domestic-only flows outside the UK; for a contact in country X the relevant lane shapes are UK<->X / X<->3rd via UK / inbound to UK from anywhere.
+- **No-hedge META-RULES**: explicit ban on apologetic openers ('Apologies for the uncertainty'), 'I cannot confirm', 'whether we connected at all', throat-clearing ('before diving into specifics').
+- **No-comma-after-salutation rule**: 'Hi Adria' not 'Hi Adria,'. 'Best regards' not 'Best regards,'. (BR-Portuguese 'Oi [Name],' is the one explicit exception.)
+- **Locked sign-offs per rep** in REP_VOICE_NOTES: Rob = Best regards / All the best / Kind regards. Sam = Sam alone / Best regards / Cheers. Bruna = Regards (English) / Obrigada (PT-BR).
+- **Verb-stem matching in voice/lint.ts**: banned_word patterns that look like verb stems ('dive', 'delve', 'leverage') now match conjugations ('diving', 'delves', 'leveraging') via `(?:e|es|ed|ing|er)?` regex tail. Prevents 'diving into specifics' slipping through.
+- **Full contact context in DraftInput**: name, title, company, company_type, country, region, meeting_notes, met_by_raw (preserves GKF Directory + Business Card source signals alongside Rob/Sam/Bruna), event_context_brief.
+- **Feedback-to-AI loop**: /api/event-followup/draft accepts {feedback, previous_draft}; generator gets a === REVISION REQUEST === block in the user prompt with previous draft + operator's feedback. UI: textarea + 'Regenerate with feedback' button below the body editor.
+- **Auto-CC the team**: send route auto-builds the CC list as the OTHER two Corten reps + any internal_cc from Airtable. Sender excluded. Deduped.
+
+### Event follow-up - UI overhaul (full-width + best practices)
+
+- All new pages full-width (dropped max-w-7xl on /dev/event-followup, /dev/voice, /events).
+- /dev/event-followup contact table now shows: Name + Title (Title Cased), Company (Title Cased + truncated), Country, Tier (inline editable <select>), Met by (toggleable chip row, clickable without expanding row), Status, Notes preview (line-clamp-2 with hover for full text), Actions.
+- toProperCase() helper normalises ALL-CAPS company / person names to Title Case while preserving abbreviations (LTD, S.A., GmbH, BV, FCL, LCL, UK, USA, etc.). Mixed-case strings pass through.
+- truncate() helper with `…` ellipsis + `title=` attribute on hover for accessibility.
+- Inner boxed cards in expanded view dropped; replaced with section headers + border-bottom dividers so labels and textareas have full width.
+- Labels forced to `block` so textareas drop below labels rather than rendering inline.
+- Editable in expanded panel: Met By multi-select chips (auto-updates send_from_email), Meeting Notes textarea, Company Info textarea, Tier dropdown.
+
 ### Outbound + voice - event follow-up build (M1)
 
 - **`docs/voice/anti-ai-writing-style.md`** - design contract for the anti-AI writing style guide. 4 ban categories (words, phrases, structures, formatting, tone) plus tone markers, all with replacement guidance. Channel-aware (email is strictest, messaging/social looser). 7 annotated voice examples from real sent emails (4 Rob, 2 Sam, 1 Bruna) with per-rep voice notes. Bruna's bilingual Portuguese/English voice captured.
