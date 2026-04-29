@@ -29,40 +29,45 @@ export async function GET(req: Request) {
   const auth = await requireAuth(ROUTE, req);
   if (!auth.ok) return auth.response;
 
-  // Two queries: contact rows + event names. Joining via FK at the PostgREST
-  // layer requires the static relationship to be declared in the generated
-  // types (database.ts), which won't pick up event_contacts -> events until
-  // gen-supabase-types runs. Two queries are simpler and just as fast.
-  const [contactsRes, eventsRes] = await Promise.all([
+  // Pull ALL active events first, then layer contact counts on top. This way
+  // an event with zero contacts still shows in the selector so the operator
+  // can click "Import from Airtable" and see the event ready to receive them.
+  const [eventsRes, contactsRes] = await Promise.all([
+    supabase
+      .from("events")
+      .select("id, name, active")
+      .eq("active", true)
+      .order("start_date", { ascending: false }),
     supabase
       .from("event_contacts")
       .select("event_id, follow_up_status")
       .order("event_id", { ascending: true }),
-    supabase.from("events").select("id, name"),
   ]);
-  if (contactsRes.error) return apiError(contactsRes.error.message, 500);
   if (eventsRes.error) return apiError(eventsRes.error.message, 500);
+  if (contactsRes.error) return apiError(contactsRes.error.message, 500);
 
-  const eventNameById = new Map<number, string>();
-  for (const e of (eventsRes.data ?? []) as Array<{ id: number; name: string }>) {
-    eventNameById.set(e.id, e.name);
-  }
-
-  // Reduce to per-event counts grouped by status.
+  // Seed the summary with one entry per event, total=0, status counts empty.
   const summary: Record<
     string,
     { event_id: number; event_name: string; total: number; by_status: Record<string, number> }
   > = {};
+  for (const e of (eventsRes.data ?? []) as Array<{ id: number; name: string }>) {
+    summary[String(e.id)] = {
+      event_id: e.id,
+      event_name: e.name,
+      total: 0,
+      by_status: {},
+    };
+  }
+
+  // Layer in the contact counts.
   for (const row of (contactsRes.data ?? []) as Array<{
     event_id: number | null;
     follow_up_status: string;
   }>) {
     if (!row.event_id) continue;
     const key = String(row.event_id);
-    const eventName = eventNameById.get(row.event_id) ?? "(unknown)";
-    if (!summary[key]) {
-      summary[key] = { event_id: row.event_id, event_name: eventName, total: 0, by_status: {} };
-    }
+    if (!summary[key]) continue; // contact pointing at an inactive/deleted event
     summary[key].total += 1;
     summary[key].by_status[row.follow_up_status] =
       (summary[key].by_status[row.follow_up_status] ?? 0) + 1;
