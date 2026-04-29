@@ -601,6 +601,35 @@ function Inner() {
               await loadNeedsAttention();
             });
           }}
+          onBulkMergeIntoColleagues={async (sources) => {
+            return runAction(`bulk-merge-${sources.length}`, async () => {
+              let merged = 0;
+              let skipped = 0;
+              const errors: string[] = [];
+              for (const s of sources) {
+                if (!s.targetId) {
+                  skipped++;
+                  continue;
+                }
+                const res = await fetch("/api/event-followup/contacts/merge", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ source_id: s.sourceId, target_id: s.targetId }),
+                });
+                if (res.ok) merged++;
+                else {
+                  const data = await res.json().catch(() => ({}));
+                  errors.push(`#${s.sourceId}: ${data.error ?? "unknown"}`);
+                }
+              }
+              const parts = [`Merged ${merged} contacts.`];
+              if (skipped > 0) parts.push(`${skipped} skipped (no colleague to merge into).`);
+              if (errors.length > 0) parts.push(`${errors.length} failed (${errors.slice(0, 2).join("; ")}${errors.length > 2 ? "..." : ""}).`);
+              setActionResult(parts.join(" "));
+              await loadNeedsAttention();
+              if (selectedEventId) await loadContacts(selectedEventId);
+            });
+          }}
           onMergeInto={async (sourceId, targetId) => {
             return runAction(`merge-${sourceId}`, async () => {
               const res = await fetch("/api/event-followup/contacts/merge", {
@@ -955,6 +984,7 @@ function NeedsAttentionView({
   onMergeInto,
   onBulkAssignEvent,
   onBulkMarkJunk,
+  onBulkMergeIntoColleagues,
   loading,
 }: {
   contacts: ContactRow[];
@@ -965,6 +995,7 @@ function NeedsAttentionView({
   onMergeInto: (sourceId: number, targetId: number) => Promise<void>;
   onBulkAssignEvent: (ids: number[], eventId: number) => Promise<void>;
   onBulkMarkJunk: (ids: number[]) => Promise<void>;
+  onBulkMergeIntoColleagues: (sources: Array<{ sourceId: number; targetId: number | null }>) => Promise<void>;
   loading: boolean;
 }) {
   // Count by reason for the summary badges
@@ -1113,6 +1144,26 @@ function NeedsAttentionView({
               </Button>
             </div>
             <span className="text-zinc-300">|</span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              disabled={bulkBusy || busyAction === `bulk-merge-${selectedIds.size}`}
+              onClick={async () => {
+                const sources = contacts
+                  .filter((c) => selectedIds.has(c.id))
+                  .map((c) => ({
+                    sourceId: c.id,
+                    targetId: c.co_company_contacts?.[0]?.id ?? null,
+                  }));
+                await onBulkMergeIntoColleagues(sources);
+                setSelectedIds(new Set());
+              }}
+            >
+              {busyAction === `bulk-merge-${selectedIds.size}`
+                ? "Merging..."
+                : `Merge ${selectedIds.size} into colleagues`}
+            </Button>
             <Button
               size="sm"
               variant="outline"
