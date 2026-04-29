@@ -4,9 +4,11 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
-### Dev menu in the sidebar
+### Sidebar cascade - 22 icons collapsed to 8
 
-- **`src/components/dev-menu.tsx`** - sidebar flyout listing every `/dev/*` page grouped by purpose (Quoting engine / TMS + integrations / Founder surface). Click the Code icon at the bottom of the sidebar to open the panel; click outside, hit Escape, or navigate to close. Active page is highlighted with a violet left-border + tinted background. Each entry shows the page-header icon for visual continuity. Pinned at the bottom of `SidebarNav` under a thin divider so it never competes with the main nav.
+- **`src/components/sidebar-flyout.tsx`** - reusable 320px flyout panel. Takes a trigger icon, a header subtitle, an array of sections (each with optional label + pages), an accent colour, and an optional footer slot. Click trigger to open, click outside / Escape / navigate to close. Active state lights up the trigger icon when the current path matches any page in the menu.
+- **Sidebar restructured into 8 entries** (was 22 icons + brain logo). Single icons: Overview (Home) and the existing brain. Cascading flyouts for Sales (5 items, emerald), Clients (3, sky), Comms (3, amber), Ops (2, rose), Reports (3, indigo), Admin (4, zinc). Dev pages (13 across 3 sections, violet) pinned at the bottom under a divider. Each item retains its original page icon + a short path on the right in mono for muscle-memory navigation.
+- **Dev menu refactored** to use the new `SidebarFlyout` component. Behaviour identical, code shared with the new top-level group menus. `dev-menu.tsx` removed; the page list moved into `sidebar-nav.tsx` as a `DEV` constant alongside `SALES` / `CLIENTS` / etc. so all nav data lives in one file.
 
 ### Security hardening - post-audit fixes (2026-04-29)
 
