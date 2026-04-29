@@ -38,6 +38,7 @@ import {
   Users,
   Wallet,
   Workflow,
+  HeartPulse,
 } from "lucide-react";
 import { SidebarFlyout, type FlyoutSection } from "@/components/sidebar-flyout";
 
@@ -145,6 +146,8 @@ const DEV: FlyoutSection[] = [
     pages: [
       { href: "/dev/event-followup", label: "Event follow-ups", description: "Post-conference contact pipeline + AI drafts", icon: Trophy },
       { href: "/dev/voice", label: "Voice rules", description: "Anti-AI writing style: banned words + replacements", icon: AlertTriangle },
+      { href: "/dev/system-rules", label: "System rules", description: "Seniority weights, model routing, template authoring", icon: Settings },
+      { href: "/dev/import-health", label: "Import health", description: "Audit + drops dashboard for the import pipeline", icon: HeartPulse },
     ],
   },
 ];
