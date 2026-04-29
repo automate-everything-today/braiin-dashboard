@@ -4,6 +4,19 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### Security - incident response (Phase 5)
+
+- **Migration 054**: `feedback.ip_blocklist` (with auto-expiry), `feedback.system_flags` (lockdown_mode_active + session_min_iat seeded), `feedback.security_actions_log` (immutable operator-action audit). Applied via Mgmt API.
+- **`src/lib/security/enforcement.ts`** - `isIpBlocked()`, `isLockdownActive()`, `getSessionMinIat()` with 30s in-process cache to keep auth checks fast. `clearEnforcementCaches()` for instant local invalidation after writes.
+- **`src/lib/api-auth.ts`** extended:
+  * `requireAuth(route, req)` now checks IP blocklist FIRST, then session, then session-revocation floor (jwt.iat >= system_flags.session_min_iat).
+  * `requireRole/Manager/SuperAdmin` accept the `req` param and check lockdown mode for non-GET requests, returning 503 maintenance when active.
+  * Read traffic continues during lockdown so the operator can still see the dashboard and clear the lockdown.
+- **Honeypot auto-block**: `captureHoneypotHit` now also runs a fire-and-forget IP-count check; 3+ honeypot hits in 1h from same IP auto-inserts a 24h block in `ip_blocklist` with `source='auto:honeypot'`.
+- **`/api/security/actions` route** - super_admin only. POST handles `block_ip`, `unblock_ip`, `set_lockdown` (toggle), `revoke_all_sessions` (bumps session_min_iat to NOW). Each action: writes to `security_actions_log` + `build_log` + `super_admin_action` security event + Telegram broadcast + cache invalidation. GET returns blocklist + flags + recent actions for the UI.
+- **`/dev/security` Incident Response panel** - Lockdown toggle (red border on the whole card when active), Revoke-all-sessions button (with confirm), Block-IP form, active-blocks list with one-click unblock, recent-actions tail.
+- **Telegram bot reply commands** - `/api/inbound/telegram-command` route accepts updates from @bobbadobbabot. Auth via path-secret (`TELEGRAM_WEBHOOK_SECRET`) plus strict chat-id allowlist (`TELEGRAM_CHAT_ID`); other chats are silently dropped. Commands: `/status`, `/block <ip> [reason]`, `/unblock <ip>`, `/lockdown <reason>`, `/unlock`, `/logout-all <reason>`, `/help`. Each command runs the same code paths as the dashboard buttons.
+
 ### Security - audit trail + honeypots (Phase 3 + 4)
 
 - **Migration `053_security_events_audit_types.sql`** - extends event_type CHECK constraint with `super_admin_action` (Phase 3) and `honeypot_hit` (Phase 4). Idempotent via DROP+ADD; applied via Management API on first run.

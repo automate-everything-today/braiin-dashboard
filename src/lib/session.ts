@@ -23,6 +23,11 @@ export type SessionPayload = {
   department: string;
   branch: string;
   is_staff: boolean;
+  // Standard JWT claim set by jose's setIssuedAt(). Optional in the
+  // type because old verified payloads may not have it (jose still
+  // populates at runtime). Used by the session-revocation check that
+  // compares against feedback.system_flags.session_min_iat.
+  iat?: number;
 };
 
 export async function createSessionToken(payload: SessionPayload): Promise<string> {

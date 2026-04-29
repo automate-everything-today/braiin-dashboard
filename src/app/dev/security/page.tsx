@@ -21,13 +21,17 @@ import { Separator } from "@/components/ui/separator";
 import { PageGuard } from "@/components/page-guard";
 import {
   AlertTriangle,
+  Ban,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   Clock,
+  Lock,
+  LogOut,
   ShieldCheck,
   ShieldAlert,
   Shield,
+  Unlock,
   XCircle,
 } from "lucide-react";
 import { PILL_SM } from "@/lib/ui-constants";
@@ -321,6 +325,9 @@ export default function SecurityDashboardPage() {
             </div>
           )}
 
+          {/* Incident response panel */}
+          <IncidentResponsePanel />
+
           {/* Env detail */}
           {data && (
             <Card>
@@ -541,6 +548,139 @@ export default function SecurityDashboardPage() {
         </div>
       </div>
     </PageGuard>
+  );
+}
+
+interface IncidentBlocklistRow { ip: string; reason: string; source: string; expires_at: string | null; created_at: string; }
+interface IncidentFlag { flag_key: string; flag_value: unknown; updated_at: string; updated_by_email: string | null; }
+interface IncidentActionLog { action_id: number; action: string; actor_email: string | null; actor_source: string; payload: Record<string, unknown>; occurred_at: string; }
+
+function IncidentResponsePanel() {
+  const [data, setData] = useState<{ blocklist: IncidentBlocklistRow[]; flags: IncidentFlag[]; recent_actions: IncidentActionLog[] } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [blockIp, setBlockIp] = useState("");
+  const [blockReason, setBlockReason] = useState("");
+
+  async function refresh() {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/security/actions");
+      const json = (await r.json()) as typeof data & { error?: string };
+      if (!r.ok) throw new Error(json?.error ?? "load failed");
+      setData(json);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "load failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => { refresh(); }, []);
+
+  async function call(body: Record<string, unknown>, confirmText?: string) {
+    if (confirmText && !confirm(confirmText)) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/security/actions", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      const json = (await r.json()) as { error?: string };
+      if (!r.ok) throw new Error(json.error ?? "action failed");
+      await refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "action failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const lockdown = data?.flags.find((f) => f.flag_key === "lockdown_mode_active")?.flag_value === true;
+  const minIat = Number(data?.flags.find((f) => f.flag_key === "session_min_iat")?.flag_value ?? 0);
+  const blocked = data?.blocklist ?? [];
+  const recent = data?.recent_actions ?? [];
+
+  return (
+    <Card className={lockdown ? "border-rose-500 border-2" : ""}>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium inline-flex items-center gap-2">
+          <ShieldAlert className="size-4 text-rose-600" /> Incident response
+          {lockdown && <Badge className={`${PILL_SM} bg-rose-600 text-white`}>LOCKDOWN ACTIVE</Badge>}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4 text-xs">
+        {err && (
+          <div className="border border-rose-300 bg-rose-50 text-rose-800 px-3 py-2 rounded inline-flex items-start gap-2 w-full">
+            <AlertTriangle className="size-3.5 shrink-0 mt-0.5" />
+            <div className="flex-1">{err}</div>
+            <button onClick={() => setErr(null)} className="text-rose-700 hover:text-rose-900 text-[11px] underline">dismiss</button>
+          </div>
+        )}
+        {loading && !data && <BraiinLoader label="Loading..." size="sm" variant="inline" />}
+
+        {/* Action buttons */}
+        <div className="grid grid-cols-3 gap-2">
+          <Button size="sm" variant={lockdown ? "default" : "outline"}
+            className={lockdown ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "border-rose-300 text-rose-700 hover:bg-rose-50"}
+            disabled={busy}
+            onClick={() => call({ action: "set_lockdown", active: !lockdown, reason: lockdown ? "manual clear" : prompt("Lockdown reason?") ?? "manual lockdown" }, lockdown ? "Clear lockdown? Writes will resume." : "ENABLE LOCKDOWN? All writes will be blocked until cleared.")}>
+            {lockdown ? <><Unlock className="size-3 mr-1" />Clear lockdown</> : <><Lock className="size-3 mr-1" />Activate lockdown</>}
+          </Button>
+          <Button size="sm" variant="outline" className="text-rose-700 border-rose-300 hover:bg-rose-50" disabled={busy}
+            onClick={() => call({ action: "revoke_all_sessions", reason: prompt("Revoke reason?") ?? "manual revoke" }, "REVOKE ALL SESSIONS? You will need to log back in. So will every other user.")}>
+            <LogOut className="size-3 mr-1" />Revoke all sessions
+          </Button>
+          <div className="text-[10px] text-zinc-500 inline-flex items-center justify-end pr-1">
+            min iat: <span className="font-mono ml-1">{minIat}</span>
+          </div>
+        </div>
+
+        {/* Block IP form */}
+        <div className="border-t pt-3 space-y-2">
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500">Block IP (24h)</div>
+          <div className="flex items-center gap-2">
+            <input type="text" value={blockIp} onChange={(e) => setBlockIp(e.target.value)} placeholder="ip address"
+              className="flex-1 h-7 px-2 rounded border border-zinc-300 text-xs bg-white font-mono" />
+            <input type="text" value={blockReason} onChange={(e) => setBlockReason(e.target.value)} placeholder="reason (optional)"
+              className="flex-1 h-7 px-2 rounded border border-zinc-300 text-xs bg-white" />
+            <Button size="sm" disabled={busy || !blockIp.trim()} className="h-7 text-[11px]"
+              onClick={async () => { await call({ action: "block_ip", ip: blockIp.trim(), reason: blockReason.trim() || "manual block from dashboard", expires_at: new Date(Date.now() + 86400000).toISOString() }); setBlockIp(""); setBlockReason(""); }}>
+              <Ban className="size-3 mr-1" />Block
+            </Button>
+          </div>
+        </div>
+
+        {/* Active blocks */}
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">Active blocks ({blocked.length})</div>
+          {blocked.length === 0 && <div className="text-zinc-500 italic">None</div>}
+          {blocked.map((b) => (
+            <div key={b.ip} className="flex items-center gap-2 py-1 border-b border-zinc-100 last:border-0">
+              <span className="font-mono text-zinc-700 flex-1 truncate">{b.ip}</span>
+              <Badge className={`${PILL_SM} ${b.source.startsWith("auto") ? "bg-violet-100 text-violet-800" : "bg-zinc-100 text-zinc-700"}`}>{b.source}</Badge>
+              <span className="text-zinc-500 truncate max-w-xs">{b.reason}</span>
+              <span className="text-[10px] text-zinc-400 font-mono">{b.expires_at ? `→${b.expires_at.slice(0, 16).replace("T", " ")}` : "permanent"}</span>
+              <button disabled={busy} onClick={() => call({ action: "unblock_ip", ip: b.ip })} className="text-emerald-700 hover:text-emerald-900 text-[11px] underline">unblock</button>
+            </div>
+          ))}
+        </div>
+
+        {/* Recent actions */}
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">Recent actions ({recent.length})</div>
+          {recent.length === 0 && <div className="text-zinc-500 italic">None</div>}
+          {recent.slice(0, 8).map((a) => (
+            <div key={a.action_id} className="flex items-center gap-2 py-0.5 text-[11px]">
+              <span className="font-mono text-zinc-400">{a.occurred_at.slice(11, 19)}</span>
+              <span className="font-medium">{a.action}</span>
+              <Badge className={`${PILL_SM} bg-zinc-100 text-zinc-600`}>{a.actor_source}</Badge>
+              <span className="text-zinc-500 truncate flex-1">{a.actor_email ?? ""}</span>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
