@@ -81,6 +81,54 @@ const NAME_TO_EMAIL: Record<string, string> = {
   Bruna: "bruna.natale@cortenlogistics.com",
 };
 
+/**
+ * Normalise ALL-CAPS or weirdly-cased company / person names to Title Case.
+ * Preserves common abbreviations (LTD, S.A., GmbH, Inc, LLC, USA, UK, EU, BV).
+ * Detection: if the string is mostly uppercase letters, retitle. If it
+ * already has mixed case, leave it alone.
+ */
+const PRESERVE_TOKENS = new Set([
+  "LTD","LLC","INC","CORP","CO","S.A.","SA","SAS","SL","SLU","BV","NV","GMBH",
+  "AG","AB","OY","LDA","SRL","SPA","KG","UK","USA","EU","UAE","DDP","DDU","DAP",
+  "FCL","LCL","B2B","B2C","API","ETA","ETD","BL","HBL","MBL","HQ","BD","II","III","IV",
+]);
+
+function toProperCase(input: string | null | undefined): string {
+  if (!input) return "";
+  const trimmed = input.trim();
+  if (!trimmed) return "";
+  // Only re-case if the string is mostly uppercase. Mixed-case stays as-is.
+  const letters = trimmed.replace(/[^A-Za-z]/g, "");
+  if (letters.length === 0) return trimmed;
+  const upperRatio =
+    letters.split("").filter((c) => c === c.toUpperCase()).length / letters.length;
+  if (upperRatio < 0.7) return trimmed;
+  return trimmed
+    .split(/(\s+)/)
+    .map((tok) => {
+      if (/^\s+$/.test(tok)) return tok;
+      const upper = tok.toUpperCase();
+      if (PRESERVE_TOKENS.has(upper)) return upper;
+      // Hyphenated / dotted segments: title each part.
+      return tok
+        .split(/([-/.])/)
+        .map((part) => {
+          if (/^[-/.]$/.test(part)) return part;
+          if (PRESERVE_TOKENS.has(part.toUpperCase())) return part.toUpperCase();
+          if (part.length === 0) return part;
+          return part[0].toUpperCase() + part.slice(1).toLowerCase();
+        })
+        .join("");
+    })
+    .join("");
+}
+
+/** Truncate to N chars with ellipsis. */
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1).trimEnd() + "…";
+}
+
 const STATUS_TONE: Record<string, string> = {
   pending: "bg-zinc-100 text-zinc-700",
   already_engaged: "bg-blue-100 text-blue-700",
@@ -489,15 +537,20 @@ function Inner() {
                   const isExpanded = expandedId === c.id;
                   const metByList = (c.met_by ?? []).map((v) => {
                     if (v === "Rob" || v === "Sam" || v === "Bruna") return v;
-                    if (v === "GKF Directory") return "GKF dir";
+                    if (v === "GKF Directory") return "GKF";
                     if (v === "Business Card") return "Card";
-                    if (v.includes("@")) return v.split("@")[0].split(".")[0];
-                    return v;
+                    if (v.includes("@")) {
+                      const first = v.split("@")[0].split(".")[0];
+                      return first[0].toUpperCase() + first.slice(1).toLowerCase();
+                    }
+                    return toProperCase(v);
                   });
-                  const notesPreview = c.meeting_notes
-                    ? c.meeting_notes.length > 80
-                      ? c.meeting_notes.slice(0, 80) + "..."
-                      : c.meeting_notes
+                  const displayName = toProperCase(c.name ?? c.email);
+                  const displayCompany = c.company ? toProperCase(c.company) : null;
+                  const displayTitle = c.title ? toProperCase(c.title) : null;
+                  const notesFull = c.meeting_notes ?? "";
+                  const notesPreview = notesFull
+                    ? truncate(notesFull, 90)
                     : null;
                   return (
                     <>
@@ -506,48 +559,96 @@ function Inner() {
                         onClick={() => setExpandedId(isExpanded ? null : c.id)}
                         className="cursor-pointer"
                       >
-                        <TableCell className="font-medium align-top">
-                          <div>{c.name ?? c.email}</div>
-                          {c.title && (
-                            <div className="text-xs text-zinc-500 mt-0.5">{c.title}</div>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-sm align-top">{c.company ?? "—"}</TableCell>
-                        <TableCell className="text-sm align-top">{c.country ?? "—"}</TableCell>
-                        <TableCell className="align-top">
-                          {c.tier ? (
-                            <Badge className="bg-zinc-200 text-zinc-800">{c.tier}</Badge>
-                          ) : (
-                            <span className="text-zinc-400 text-sm">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-xs align-top">
-                          {metByList.length > 0 ? (
-                            <div className="flex flex-wrap gap-1">
-                              {metByList.map((m, i) => (
-                                <span
-                                  key={i}
-                                  className="px-1.5 py-0.5 bg-zinc-100 rounded text-zinc-700"
-                                >
-                                  {m}
-                                </span>
-                              ))}
+                        <TableCell className="font-medium align-top max-w-[14rem]">
+                          <div className="truncate" title={displayName}>{displayName}</div>
+                          {displayTitle && (
+                            <div className="text-xs text-zinc-500 mt-0.5 truncate" title={displayTitle}>
+                              {displayTitle}
                             </div>
-                          ) : (
-                            <span className="text-zinc-400">—</span>
                           )}
+                        </TableCell>
+                        <TableCell className="text-sm align-top max-w-[18rem]">
+                          <div className="truncate" title={displayCompany ?? ""}>
+                            {displayCompany ?? "—"}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm align-top">{c.country ?? "—"}</TableCell>
+                        <TableCell className="align-top" onClick={(e) => e.stopPropagation()}>
+                          <select
+                            value={c.tier ?? ""}
+                            onChange={async (ev) => {
+                              const v = ev.target.value ? Number(ev.target.value) : null;
+                              await fetch("/api/event-followup/contacts", {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ id: c.id, tier: v }),
+                              });
+                              if (selectedEventId) await loadContacts(selectedEventId);
+                            }}
+                            className="px-1.5 py-0.5 text-xs border rounded bg-white"
+                          >
+                            <option value="">—</option>
+                            {[1, 2, 3, 4, 5].map((n) => (
+                              <option key={n} value={n}>{n}</option>
+                            ))}
+                          </select>
+                        </TableCell>
+                        <TableCell
+                          className="text-xs align-top"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="flex flex-wrap gap-1">
+                            {MET_BY_OPTIONS.map((opt) => {
+                              const ticked = (c.met_by ?? []).includes(opt.value);
+                              const label = opt.value === "GKF Directory" ? "GKF" : opt.value === "Business Card" ? "Card" : opt.label;
+                              return (
+                                <button
+                                  key={opt.value}
+                                  type="button"
+                                  onClick={async () => {
+                                    const next = ticked
+                                      ? (c.met_by ?? []).filter((v) => v !== opt.value)
+                                      : [...(c.met_by ?? []), opt.value];
+                                    await fetch("/api/event-followup/contacts", {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ id: c.id, met_by: next }),
+                                    });
+                                    if (selectedEventId) await loadContacts(selectedEventId);
+                                  }}
+                                  className={`px-1.5 py-0.5 rounded text-[11px] border transition ${
+                                    ticked
+                                      ? opt.isPerson
+                                        ? "bg-emerald-100 border-emerald-400 text-emerald-800"
+                                        : "bg-zinc-200 border-zinc-400 text-zinc-700"
+                                      : "bg-white border-zinc-200 text-zinc-400 hover:border-zinc-400"
+                                  }`}
+                                  title={opt.value}
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </TableCell>
                         <TableCell className="align-top">
                           <Badge className={STATUS_TONE[c.follow_up_status] ?? "bg-zinc-100"}>
                             {c.follow_up_status}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-xs text-zinc-600 align-top max-w-xs">
-                          {notesPreview ?? (
+                        <TableCell className="text-xs text-zinc-600 align-top max-w-[24rem]">
+                          {notesPreview ? (
+                            <div
+                              className="line-clamp-2 leading-snug"
+                              title={notesFull}
+                            >
+                              {notesPreview}
+                            </div>
+                          ) : (
                             <span className="text-zinc-400 italic">no notes</span>
                           )}
                           {c.engagement_summary && (
-                            <div className="text-[10px] text-blue-700 mt-0.5">
+                            <div className="text-[10px] text-blue-700 mt-1 line-clamp-1">
                               {c.engagement_summary}
                             </div>
                           )}
