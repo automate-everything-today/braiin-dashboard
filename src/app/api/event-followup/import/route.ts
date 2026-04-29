@@ -24,6 +24,8 @@ import { requireAuth, requireManager } from "@/lib/api-auth";
 import { apiError, apiResponse } from "@/lib/validation";
 import { importEventContacts } from "@/lib/airtable/event-contacts";
 import { loadRulesSnapshot } from "@/lib/system-rules/load";
+import { importGranolaForEvent, type GranolaImportResult } from "@/lib/event-followup/granola-import";
+import { defaultGranolaClient } from "@/lib/event-followup/granola-clients";
 
 const ROUTE = "/api/event-followup/import";
 
@@ -94,7 +96,32 @@ export async function POST(req: Request) {
 
   try {
     const result = await importEventContacts({ runId, snapshot });
-    return apiResponse({ result, run_id: runId });
+
+    const granolaClient = defaultGranolaClient();
+    const granolaResults: GranolaImportResult[] = [];
+    for (const eventId of result.imported_event_ids) {
+      try {
+        const gResult = await importGranolaForEvent(eventId, granolaClient, snapshot);
+        granolaResults.push(gResult);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "Granola ingestion failed";
+        granolaResults.push({
+          ingested_meetings: 0,
+          auto_linked: 0,
+          pending_review: 0,
+          errors: [`event_id=${eventId}: ${msg}`],
+        });
+      }
+    }
+
+    const granola: GranolaImportResult = {
+      ingested_meetings: granolaResults.reduce((s, r) => s + r.ingested_meetings, 0),
+      auto_linked: granolaResults.reduce((s, r) => s + r.auto_linked, 0),
+      pending_review: granolaResults.reduce((s, r) => s + r.pending_review, 0),
+      errors: granolaResults.flatMap((r) => r.errors),
+    };
+
+    return apiResponse({ result, run_id: runId, granola });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Import failed";
     return apiError(msg, 500);
