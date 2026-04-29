@@ -11,6 +11,7 @@ import { z } from "zod";
 
 const RELATIONSHIP = ["member", "non-member", "prospect", "declined"] as const;
 const NETWORK_TYPE = ["general", "project_cargo", "specialised", "association"] as const;
+const CURRENCIES = ["GBP", "USD", "EUR"] as const;
 
 const createSchema = z.object({
   name: z.string().min(1).max(120),
@@ -18,10 +19,14 @@ const createSchema = z.object({
   additional_domains: z.array(z.string().min(3).max(255)).max(10).default([]),
   relationship: z.enum(RELATIONSHIP).default("non-member"),
   network_type: z.enum(NETWORK_TYPE).default("general"),
-  annual_fee_gbp: z.number().int().nonnegative().max(1_000_000).nullable().optional(),
+  // Renamed from annual_fee_gbp in migration 059. annual_fee_amount is in
+  // fee_currency (default GBP). NULL on sub-networks means "covered by parent".
+  annual_fee_amount: z.number().nonnegative().max(1_000_000).nullable().optional(),
+  fee_currency: z.enum(CURRENCIES).default("GBP"),
   events_per_year: z.number().int().nonnegative().max(50).nullable().optional(),
   website: z.string().max(255).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
+  parent_network_id: z.number().int().positive().nullable().optional(),
   active: z.boolean().default(true),
 });
 
@@ -73,18 +78,21 @@ export async function POST(req: Request) {
 
   const { data, error } = await supabase
     .from("freight_networks")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .insert({
       name: input.name.trim(),
       primary_domain: normaliseDomain(input.primary_domain),
       additional_domains: input.additional_domains.map(normaliseDomain),
       relationship: input.relationship,
       network_type: input.network_type,
-      annual_fee_gbp: input.annual_fee_gbp ?? null,
+      annual_fee_amount: input.annual_fee_amount ?? null,
+      fee_currency: input.fee_currency,
       events_per_year: input.events_per_year ?? null,
       website: input.website ?? null,
       notes: input.notes ?? null,
+      parent_network_id: input.parent_network_id ?? null,
       active: input.active,
-    })
+    } as any)
     .select()
     .single();
   if (error) return apiError(error.message, 500);
@@ -108,32 +116,24 @@ export async function PATCH(req: Request) {
   }
   const { id, ...updates } = parsed.data;
 
-  const payload: {
-    name?: string;
-    primary_domain?: string;
-    additional_domains?: string[];
-    relationship?: "member" | "non-member" | "prospect" | "declined";
-    network_type?: "general" | "project_cargo" | "specialised" | "association";
-    annual_fee_gbp?: number | null;
-    events_per_year?: number | null;
-    website?: string | null;
-    notes?: string | null;
-    active?: boolean;
-  } = {};
+  const payload: Record<string, unknown> = {};
   if (updates.name !== undefined) payload.name = updates.name.trim();
   if (updates.primary_domain !== undefined) payload.primary_domain = normaliseDomain(updates.primary_domain);
   if (updates.additional_domains !== undefined) payload.additional_domains = updates.additional_domains.map(normaliseDomain);
   if (updates.relationship !== undefined) payload.relationship = updates.relationship;
   if (updates.network_type !== undefined) payload.network_type = updates.network_type;
-  if (updates.annual_fee_gbp !== undefined) payload.annual_fee_gbp = updates.annual_fee_gbp;
+  if (updates.annual_fee_amount !== undefined) payload.annual_fee_amount = updates.annual_fee_amount;
+  if (updates.fee_currency !== undefined) payload.fee_currency = updates.fee_currency;
   if (updates.events_per_year !== undefined) payload.events_per_year = updates.events_per_year;
   if (updates.website !== undefined) payload.website = updates.website;
   if (updates.notes !== undefined) payload.notes = updates.notes;
+  if (updates.parent_network_id !== undefined) payload.parent_network_id = updates.parent_network_id;
   if (updates.active !== undefined) payload.active = updates.active;
 
   const { data, error } = await supabase
     .from("freight_networks")
-    .update(payload)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .update(payload as any)
     .eq("id", id)
     .select()
     .single();

@@ -14,10 +14,12 @@ export type FreightNetwork = {
   additional_domains: string[];
   relationship: "member" | "non-member" | "prospect" | "declined";
   network_type: "general" | "project_cargo" | "specialised" | "association";
-  annual_fee_gbp: number | null;
+  annual_fee_amount: number | null;
+  fee_currency: "GBP" | "USD" | "EUR";
   events_per_year: number | null;
   website: string | null;
   notes: string | null;
+  parent_network_id: number | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -85,8 +87,9 @@ export function describeNetworkForPrompt(network: FreightNetwork): string {
     `relationship: ${network.relationship}`,
     `type: ${network.network_type}`,
   ];
-  if (network.relationship === "member" && network.annual_fee_gbp) {
-    parts.push(`annual fee: £${network.annual_fee_gbp.toLocaleString("en-GB")}`);
+  if (network.relationship === "member" && network.annual_fee_amount) {
+    const symbol = network.fee_currency === "USD" ? "$" : network.fee_currency === "EUR" ? "EUR " : "GBP ";
+    parts.push(`annual fee: ${symbol}${network.annual_fee_amount.toLocaleString("en-GB")}`);
   }
   return parts.join("; ");
 }

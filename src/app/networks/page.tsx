@@ -14,10 +14,12 @@ type FreightNetwork = {
   additional_domains: string[];
   relationship: "member" | "non-member" | "prospect" | "declined";
   network_type: "general" | "project_cargo" | "specialised" | "association";
-  annual_fee_gbp: number | null;
+  annual_fee_amount: number | null;
+  fee_currency: "GBP" | "USD" | "EUR";
   events_per_year: number | null;
   website: string | null;
   notes: string | null;
+  parent_network_id: number | null;
   active: boolean;
 };
 
@@ -37,6 +39,11 @@ const TYPE_LABEL: Record<FreightNetwork["network_type"], string> = {
 
 const formatGBP = (v: number | null) =>
   v == null ? "-" : new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 }).format(v);
+
+const formatFee = (amount: number | null, currency: FreightNetwork["fee_currency"]) =>
+  amount == null
+    ? "-"
+    : new Intl.NumberFormat("en-GB", { style: "currency", currency, maximumFractionDigits: 0 }).format(amount);
 
 export default function NetworksPage() {
   return (
@@ -99,10 +106,12 @@ function NetworksInner() {
         additional_domains,
         relationship: form.relationship,
         network_type: form.network_type,
-        annual_fee_gbp: form.annual_fee_gbp ?? null,
+        annual_fee_amount: form.annual_fee_amount ?? null,
+        fee_currency: form.fee_currency ?? "GBP",
         events_per_year: form.events_per_year ?? null,
         website: form.website ?? null,
         notes: form.notes ?? null,
+        parent_network_id: form.parent_network_id ?? null,
         active: form.active ?? true,
       };
       const res = await fetch("/api/networks", {
@@ -134,16 +143,20 @@ function NetworksInner() {
   }
 
   const totals = useMemo(() => {
-    if (!networks) return { count: 0, members: 0, annualSpend: 0 };
+    if (!networks) return { count: 0, members: 0, annualSpendGbp: 0 };
     let members = 0;
-    let annualSpend = 0;
+    let annualSpendGbp = 0;
     for (const n of networks) {
       if (n.relationship === "member") {
         members++;
-        annualSpend += n.annual_fee_gbp ?? 0;
+        // Sum in GBP only when fee_currency is GBP. Cross-currency conversion
+        // for the header total happens server-side in a future pass; for now
+        // the dashboard total is GBP-only and a USD/EUR fee shows as
+        // currency-tagged on its row.
+        if (n.fee_currency === "GBP") annualSpendGbp += n.annual_fee_amount ?? 0;
       }
     }
-    return { count: networks.length, members, annualSpend };
+    return { count: networks.length, members, annualSpendGbp };
   }, [networks]);
 
   if (networks === null) return <p className="text-zinc-400 py-12">Loading networks...</p>;
@@ -154,7 +167,7 @@ function NetworksInner() {
         <div>
           <h1 className="text-2xl font-bold">Freight Networks</h1>
           <p className="text-xs text-zinc-400">
-            {totals.count} known networks - {totals.members} active memberships - {formatGBP(totals.annualSpend)} annual fees
+            {totals.count} known networks - {totals.members} active memberships - {formatGBP(totals.annualSpendGbp)} annual fees (GBP only)
           </p>
         </div>
         <Button
@@ -189,7 +202,17 @@ function NetworksInner() {
               <SelectField label="Relationship" value={form.relationship || "non-member"} onChange={(v) => setForm({ ...form, relationship: v as FreightNetwork["relationship"] })} options={["member", "non-member", "prospect", "declined"]} />
               <SelectField label="Type" value={form.network_type || "general"} onChange={(v) => setForm({ ...form, network_type: v as FreightNetwork["network_type"] })} options={["general", "project_cargo", "specialised", "association"]} />
               <Field label="Website" value={form.website || ""} onChange={(v) => setForm({ ...form, website: v })} placeholder="https://www.wcaworld.com" />
-              <NumField label="Annual fee (GBP)" value={form.annual_fee_gbp ?? null} onChange={(v) => setForm({ ...form, annual_fee_gbp: v })} />
+              <NumField
+                label={`Annual fee (${form.fee_currency || "GBP"})`}
+                value={form.annual_fee_amount ?? null}
+                onChange={(v) => setForm({ ...form, annual_fee_amount: v })}
+              />
+              <SelectField
+                label="Fee currency"
+                value={form.fee_currency || "GBP"}
+                onChange={(v) => setForm({ ...form, fee_currency: v as FreightNetwork["fee_currency"] })}
+                options={["GBP", "USD", "EUR"]}
+              />
               <NumField label="Events per year" value={form.events_per_year ?? null} onChange={(v) => setForm({ ...form, events_per_year: v })} />
             </div>
             <div className="mb-3">
@@ -223,11 +246,14 @@ function NetworksInner() {
                   {n.primary_domain}
                   {n.additional_domains.length > 0 && ` · also ${n.additional_domains.join(", ")}`}
                 </p>
-                {(n.annual_fee_gbp != null || n.events_per_year != null) && (
+                {(n.annual_fee_amount != null || n.events_per_year != null) && (
                   <p className="text-[11px] text-zinc-500 mt-0.5">
-                    {n.annual_fee_gbp != null && <>Fee: {formatGBP(n.annual_fee_gbp)}</>}
-                    {n.annual_fee_gbp != null && n.events_per_year != null && " · "}
+                    {n.annual_fee_amount != null && (
+                      <>Fee: {formatFee(n.annual_fee_amount, n.fee_currency)}</>
+                    )}
+                    {n.annual_fee_amount != null && n.events_per_year != null && " · "}
                     {n.events_per_year != null && <>{n.events_per_year} events/year</>}
+                    {n.parent_network_id != null && " · sub-network"}
                   </p>
                 )}
                 {n.notes && <p className="text-[11px] text-zinc-600 mt-1">{n.notes}</p>}

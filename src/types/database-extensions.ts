@@ -255,7 +255,9 @@ export type Database = {
         };
         Relationships: [];
       };
-      // Migration: 014_freight_networks.sql
+      // Migration: 014_freight_networks.sql + 059_event_roi_extensions.sql
+      // (renamed annual_fee_gbp -> annual_fee_amount, added fee_currency,
+      // parent_network_id for sub-networks)
       freight_networks: {
         Row: {
           id: number;
@@ -264,10 +266,12 @@ export type Database = {
           additional_domains: string[];
           relationship: "member" | "non-member" | "prospect" | "declined";
           network_type: "general" | "project_cargo" | "specialised" | "association";
-          annual_fee_gbp: number | null;
+          annual_fee_amount: number | null;
+          fee_currency: "GBP" | "USD" | "EUR";
           events_per_year: number | null;
           website: string | null;
           notes: string | null;
+          parent_network_id: number | null;
           active: boolean;
           created_at: string;
           updated_at: string;
@@ -279,10 +283,12 @@ export type Database = {
           additional_domains?: string[];
           relationship?: "member" | "non-member" | "prospect" | "declined";
           network_type?: "general" | "project_cargo" | "specialised" | "association";
-          annual_fee_gbp?: number | null;
+          annual_fee_amount?: number | null;
+          fee_currency?: "GBP" | "USD" | "EUR";
           events_per_year?: number | null;
           website?: string | null;
           notes?: string | null;
+          parent_network_id?: number | null;
           active?: boolean;
           created_at?: string;
           updated_at?: string;
@@ -294,10 +300,12 @@ export type Database = {
           additional_domains?: string[];
           relationship?: "member" | "non-member" | "prospect" | "declined";
           network_type?: "general" | "project_cargo" | "specialised" | "association";
-          annual_fee_gbp?: number | null;
+          annual_fee_amount?: number | null;
+          fee_currency?: "GBP" | "USD" | "EUR";
           events_per_year?: number | null;
           website?: string | null;
           notes?: string | null;
+          parent_network_id?: number | null;
           active?: boolean;
           created_at?: string;
           updated_at?: string;
@@ -363,7 +371,8 @@ export type Database = {
           end_date: string | null;
           location: string | null;
           via_network_id: number | null;
-          cost_gbp: number | null;
+          cost_amount: number | null;
+          cost_currency: "GBP" | "USD" | "EUR";
           attendees: string[];
           notes: string | null;
           active: boolean;
@@ -378,7 +387,8 @@ export type Database = {
           end_date?: string | null;
           location?: string | null;
           via_network_id?: number | null;
-          cost_gbp?: number | null;
+          cost_amount?: number | null;
+          cost_currency?: "GBP" | "USD" | "EUR";
           attendees?: string[];
           notes?: string | null;
           active?: boolean;
@@ -393,7 +403,8 @@ export type Database = {
           end_date?: string | null;
           location?: string | null;
           via_network_id?: number | null;
-          cost_gbp?: number | null;
+          cost_amount?: number | null;
+          cost_currency?: "GBP" | "USD" | "EUR";
           attendees?: string[];
           notes?: string | null;
           active?: boolean;

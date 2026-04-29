@@ -63,7 +63,8 @@ const CLIENTS: FlyoutSection[] = [
     pages: [
       { href: "/clients", label: "Clients", description: "Active client accounts", icon: Users },
       { href: "/client-intel", label: "Client Intel", description: "AI insights per client", icon: Brain },
-      { href: "/networks", label: "Networks", description: "Agent network + partners", icon: Globe },
+      { href: "/networks", label: "Networks", description: "Agent network + partners + ROI", icon: Globe },
+      { href: "/events", label: "Events", description: "Trade shows + conferences with ROI rollup", icon: Trophy },
     ],
   },
 ];
