@@ -22,6 +22,7 @@ import { Separator } from "@/components/ui/separator";
 import { PageGuard } from "@/components/page-guard";
 import {
   AlertTriangle,
+  CalendarCheck,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -36,6 +37,7 @@ import {
   Users as UsersIcon,
   Wallet,
   Wrench,
+  X,
 } from "lucide-react";
 import { PILL_SM } from "@/lib/ui-constants";
 import { BraiinLoader } from "@/components/braiin-loader";
@@ -110,6 +112,7 @@ export default function CostsDashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [showSources, setShowSources] = useState(false);
   const [addEntryFor, setAddEntryFor] = useState<CostSource | null>(null);
+  const [closeMonthOpen, setCloseMonthOpen] = useState(false);
 
   async function refresh() {
     setLoading(true);
@@ -172,6 +175,14 @@ export default function CostsDashboardPage() {
               )}
               <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
                 Refresh
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCloseMonthOpen(true)}
+              >
+                <CalendarCheck className="size-3.5 mr-1.5" />
+                Close month
               </Button>
               <Button
                 size="sm"
@@ -351,8 +362,276 @@ export default function CostsDashboardPage() {
             }}
           />
         )}
+
+        {closeMonthOpen && (
+          <CloseMonthPanel
+            onClose={() => setCloseMonthOpen(false)}
+            onSaved={() => {
+              setCloseMonthOpen(false);
+              refresh();
+            }}
+          />
+        )}
       </div>
     </PageGuard>
+  );
+}
+
+interface CloseMonthRow {
+  source_id: string;
+  name: string;
+  vendor: string;
+  category: "usage" | "build";
+  provenance: "manual" | "api";
+  default_currency: string;
+  recurring_monthly: number | null;
+  pro_rate: number;
+  notes: string | null;
+  auto_recurring: boolean;
+  existing_amount: number | null;
+  existing_currency: string | null;
+  existing_amount_gbp: number | null;
+  existing_entry_id: string | null;
+}
+
+interface CloseMonthResponse {
+  period: string;
+  period_start: string;
+  period_end: string;
+  rows: CloseMonthRow[];
+}
+
+function CloseMonthPanel({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [period, setPeriod] = useState(() => {
+    const now = new Date();
+    const prior = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    return prior.toISOString().slice(0, 7);
+  });
+  const [data, setData] = useState<CloseMonthResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, { amount: string; currency: string }>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetch(`/api/costs/close-month?period=${period}`)
+      .then(async (r) => {
+        const json = (await r.json()) as CloseMonthResponse & { error?: string };
+        if (!r.ok) throw new Error(json.error ?? `Load failed (${r.status})`);
+        return json;
+      })
+      .then((json) => {
+        if (cancelled) return;
+        setData(json);
+        const initial: Record<string, { amount: string; currency: string }> = {};
+        for (const r of json.rows) {
+          if (r.auto_recurring) continue;
+          initial[r.source_id] = {
+            amount: r.existing_amount != null ? r.existing_amount.toString() : "",
+            currency: r.existing_currency ?? r.default_currency,
+          };
+        }
+        setDrafts(initial);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Load failed");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [period]);
+
+  async function save() {
+    if (!data) return;
+    const items = Object.entries(drafts)
+      .filter(([, v]) => v.amount.trim() !== "" && Number(v.amount) >= 0)
+      .map(([source_id, v]) => ({
+        source_id,
+        amount: Number(v.amount),
+        currency: v.currency,
+      }));
+    if (items.length === 0) {
+      setError("Enter at least one figure to save.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/costs/close-month", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ period, items }),
+      });
+      const json = (await r.json()) as { error?: string; inserted_count?: number };
+      if (!r.ok) throw new Error(json.error ?? `Save failed (${r.status})`);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const manualRows = data?.rows.filter((r) => !r.auto_recurring) ?? [];
+  const autoRows = data?.rows.filter((r) => r.auto_recurring) ?? [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div className="flex-1 bg-zinc-900/30 backdrop-blur-[1px]" onClick={onClose} />
+      <div className="w-[640px] bg-white border-l flex flex-col shadow-2xl">
+        <div className="border-b px-5 py-4 flex items-start justify-between">
+          <div>
+            <div className="text-xs uppercase tracking-wide text-violet-700 inline-flex items-center gap-1.5">
+              <CalendarCheck className="size-3" /> Close month
+            </div>
+            <div className="font-medium mt-1">
+              Period{" "}
+              <input
+                type="month"
+                value={period}
+                onChange={(e) => setPeriod(e.target.value)}
+                className="ml-1 h-7 px-2 rounded border border-zinc-300 text-sm bg-white"
+              />
+            </div>
+            {data && (
+              <div className="text-[11px] text-zinc-500 mt-1 font-mono">
+                {data.period_start} to {data.period_end}
+              </div>
+            )}
+          </div>
+          <button onClick={onClose} className="size-7 inline-flex items-center justify-center rounded hover:bg-zinc-100 text-zinc-500">
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-sm">
+          {loading && <BraiinLoader label="Loading sources..." />}
+          {error && (
+            <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded px-3 py-2 flex items-start gap-2">
+              <AlertTriangle className="size-3.5 shrink-0 mt-0.5" />
+              <div className="flex-1">{error}</div>
+            </div>
+          )}
+
+          {data && (
+            <>
+              {manualRows.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-[10px] uppercase tracking-wide text-zinc-500 font-medium">
+                    Manual entry needed ({manualRows.length})
+                  </div>
+                  {manualRows.map((r) => {
+                    const draft = drafts[r.source_id] ?? { amount: "", currency: r.default_currency };
+                    const filled = draft.amount.trim() !== "" && Number(draft.amount) >= 0;
+                    return (
+                      <div
+                        key={r.source_id}
+                        className={`border rounded p-2.5 ${filled ? "border-emerald-200 bg-emerald-50/30" : "border-zinc-200 bg-white"}`}
+                      >
+                        <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                          <span className="text-sm font-medium">{r.name}</span>
+                          <Badge className={`${PILL_SM} bg-zinc-100 text-zinc-600 font-mono`}>{r.vendor}</Badge>
+                          <Badge
+                            className={`${PILL_SM} ${r.category === "usage" ? "bg-emerald-100 text-emerald-800" : "bg-violet-100 text-violet-800"}`}
+                          >
+                            {r.category}
+                          </Badge>
+                          {r.existing_entry_id && (
+                            <Badge className={`${PILL_SM} bg-amber-100 text-amber-800`}>updating existing</Badge>
+                          )}
+                        </div>
+                        {r.notes && <div className="text-[11px] text-zinc-500 mb-2">{r.notes}</div>}
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            value={draft.amount}
+                            onChange={(e) =>
+                              setDrafts((d) => ({ ...d, [r.source_id]: { ...draft, amount: e.target.value } }))
+                            }
+                            placeholder="0.00"
+                            className="flex-1 h-8 px-2 rounded border border-zinc-300 text-sm bg-white font-mono"
+                          />
+                          <select
+                            value={draft.currency}
+                            onChange={(e) =>
+                              setDrafts((d) => ({ ...d, [r.source_id]: { ...draft, currency: e.target.value } }))
+                            }
+                            className="h-8 px-2 rounded border border-zinc-300 text-sm bg-white"
+                          >
+                            <option value="GBP">GBP</option>
+                            <option value="USD">USD</option>
+                            <option value="EUR">EUR</option>
+                          </select>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {autoRows.length > 0 && (
+                <div className="space-y-1">
+                  <div className="text-[10px] uppercase tracking-wide text-zinc-500 font-medium">
+                    Auto-recurring ({autoRows.length}) - filled by cron on the 1st
+                  </div>
+                  {autoRows.map((r) => (
+                    <div
+                      key={r.source_id}
+                      className="border border-zinc-200 bg-zinc-50/50 rounded p-2 flex items-center justify-between text-xs"
+                    >
+                      <div>
+                        <span className="font-medium">{r.name}</span>{" "}
+                        <Badge className={`${PILL_SM} bg-zinc-100 text-zinc-600`}>{r.vendor}</Badge>
+                      </div>
+                      <div className="font-mono text-zinc-700">
+                        {r.default_currency} {r.recurring_monthly?.toFixed(2) ?? "0"}
+                        {r.existing_entry_id && (
+                          <span className="text-emerald-700 ml-1">[done]</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {data.rows.length === 0 && (
+                <div className="text-xs text-zinc-500 italic py-4 text-center">
+                  No active cost sources for this org. Add some in the Sources section.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="border-t px-5 py-3 flex items-center justify-between bg-zinc-50">
+          <div className="text-[11px] text-zinc-500">
+            {Object.values(drafts).filter((d) => d.amount.trim() !== "").length} of {manualRows.length} filled
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-violet-600 hover:bg-violet-700"
+              disabled={saving || loading}
+              onClick={save}
+            >
+              {saving ? "Saving..." : "Save all"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

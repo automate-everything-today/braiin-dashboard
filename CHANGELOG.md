@@ -4,6 +4,13 @@ All notable changes to the Braiin dashboard.
 
 ## [Unreleased]
 
+### Costs dashboard - monthly close workflow
+
+- **`/api/cron/close-month-recurring` route** - runs at 09:00 UTC on the 1st of every month (per `vercel.json`). Iterates every active org, auto-creates cost entries for the prior month for every cost_source where `recurring_monthly` is set (Claude MAX, Cursor, GitHub paid plans, domains), creates one task in `public.tasks` for the org's super_admin reminding them to fill the variable-cost manual sources, and writes a `feedback.build_log` entry so the timeline shows the cron firing. Idempotent on (source_id, period, period_type) so retries are safe.
+- **`/api/costs/close-month` route** - GET returns the prior-month rollup with one row per active source (auto-recurring rows pre-marked, manual rows show existing-amount-if-any so the modal renders update vs insert correctly). POST batches manual entries in one round-trip with FX conversion to GBP server-side.
+- **Close month modal** in `/dev/costs` - new "Close month" button next to "Pull live data" opens a 640px panel listing every manual-provenance source for the chosen month with inline amount + currency inputs. Auto-recurring sources are listed read-only below so the operator can see they're handled. Save All upserts every filled row in one shot. Period defaults to the prior month, switchable via the month picker. Filled-vs-unfilled count visible in the footer.
+- **`vercel.json`** - cron entry added: `0 9 1 * *` for `/api/cron/close-month-recurring`.
+
 ### Costs dashboard with traditional-team counterfactual
 
 - **Migration `050_cost_tracking.sql`** - four tables. `feedback.cost_sources` is the registry of every cost source (Anthropic API, Vercel, Supabase, Claude MAX, domains, SaaS, etc.) with vendor identifier, category (`usage` | `build`), provenance (`manual` | `api`), default currency, recurring monthly amount, pro-rate factor (used for shared subscriptions like Claude MAX), and an extensible `api_config` JSONB. `feedback.cost_entries` is the line-item table with idempotency on (source_id, period_start, period_end, period_type) so live-fetches upsert rather than duplicate. Cached `amount_gbp` + `fx_rate_used` per entry, plus `raw_payload` JSONB for the original API response. `feedback.work_sessions` tracks time invested with auto-computed `duration_minutes`, project attribution split (so a session that touched two repos can be shared), and source provenance (manual / auto-from-commits / claude-mem). `feedback.counterfactual_scenarios` is the tunable team-cost scenarios (team_size, roles JSONB array of {role, count, day_rate_gbp}, region, velocity_multiplier).
