@@ -54,21 +54,83 @@ export async function GET(req: Request) {
   const statusParam = url.searchParams.get("status");
   const eventId = parseInt(url.searchParams.get("event_id") || "0", 10);
 
-  // Needs-attention pile: contacts with event_id IS NULL
+  // Needs-attention pile: contacts with event_id IS NULL.
+  // Also pulls colleague context: for each needs_attention row, list other
+  // event_contacts at the same (canonicalised) company so the operator can
+  // see "this contact's email might collide with X who's already at the event".
   if (statusParam === "needs_attention") {
-    const contactsRes = await supabase
-      .from("event_contacts")
-      .select(
-        "id, email, name, title, company, company_type, country, region, tier, met_by, meeting_notes, company_info, follow_up_status, attention_reason, draft_subject, draft_body, send_from_email, engagement_summary, last_inbound_at, sent_at, sent_message_id, replied_at, bounced_at, bounce_reason, event_id",
-      )
-      .eq("follow_up_status", "needs_attention")
-      .order("attention_reason", { ascending: true, nullsFirst: false })
-      .order("name", { ascending: true });
-    if (contactsRes.error) return apiError(contactsRes.error.message, 500);
-    const contacts = (contactsRes.data ?? []).map((c) => ({
-      ...c,
-      events: null,
-    }));
+    const [naRes, allRes, eventsRes] = await Promise.all([
+      supabase
+        .from("event_contacts")
+        .select(
+          "id, email, name, title, company, company_type, country, region, tier, met_by, meeting_notes, company_info, follow_up_status, attention_reason, draft_subject, draft_body, send_from_email, engagement_summary, last_inbound_at, sent_at, sent_message_id, replied_at, bounced_at, bounce_reason, event_id",
+        )
+        .eq("follow_up_status", "needs_attention")
+        .order("attention_reason", { ascending: true, nullsFirst: false })
+        .order("name", { ascending: true }),
+      // All other contacts (any status, any event) - used to surface colleagues.
+      supabase
+        .from("event_contacts")
+        .select("id, name, email, company, follow_up_status, event_id"),
+      supabase.from("events").select("id, name"),
+    ]);
+    if (naRes.error) return apiError(naRes.error.message, 500);
+    if (allRes.error) return apiError(allRes.error.message, 500);
+    if (eventsRes.error) return apiError(eventsRes.error.message, 500);
+
+    const eventNames = new Map<number, string>();
+    for (const e of (eventsRes.data ?? []) as Array<{ id: number; name: string }>) {
+      eventNames.set(e.id, e.name);
+    }
+
+    // Cheap canonicalisation: lowercase, trim, strip common org suffixes.
+    // (Not the full system_rules.company_match — that's an optional load
+    //  for matching during import. Display-time lookup is forgiving.)
+    const STRIP = /\b(ltd|inc|llc|corp|co|sa|sas|sl|gmbh|ag|bv|nv|group|logistics|cargo|shipping|worldwide|international|srl|spa|kg|ld|lda)\b\.?/gi;
+    const canonical = (raw: string | null | undefined): string => {
+      if (!raw) return "";
+      return raw
+        .toLowerCase()
+        .replace(/[.,/'"`!?]+/g, " ")
+        .replace(STRIP, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    };
+
+    interface ColleagueRow {
+      id: number;
+      name: string | null;
+      email: string;
+      company: string | null;
+      follow_up_status: string;
+      event_id: number | null;
+    }
+
+    // Bucket all contacts by canonical company name.
+    const byCompany = new Map<string, Array<ColleagueRow & { event_name: string | null }>>();
+    for (const c of (allRes.data ?? []) as ColleagueRow[]) {
+      const key = canonical(c.company);
+      if (!key) continue;
+      const list = byCompany.get(key) ?? [];
+      list.push({
+        ...c,
+        event_name: c.event_id ? eventNames.get(c.event_id) ?? null : null,
+      });
+      byCompany.set(key, list);
+    }
+
+    const contacts = (naRes.data ?? []).map((c) => {
+      const key = canonical(c.company as string | null);
+      const allAtCompany = key ? byCompany.get(key) ?? [] : [];
+      // Exclude the row itself; cap to first 6 colleagues for display sanity.
+      const colleagues = allAtCompany.filter((r) => r.id !== (c.id as number)).slice(0, 6);
+      return {
+        ...c,
+        events: null,
+        co_company_contacts: colleagues,
+      };
+    });
+
     return apiResponse({ contacts });
   }
 

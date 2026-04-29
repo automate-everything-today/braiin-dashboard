@@ -67,6 +67,15 @@ interface ContactRow {
   last_inbound_at: string | null;
   sent_at: string | null;
   events: { id: number; name: string } | null;
+  co_company_contacts?: Array<{
+    id: number;
+    name: string | null;
+    email: string;
+    company: string | null;
+    follow_up_status: string;
+    event_id: number | null;
+    event_name: string | null;
+  }>;
 }
 
 const MET_BY_OPTIONS = [
@@ -1162,18 +1171,40 @@ function NeedsAttentionView({
                         {displayName}
                       </div>
                     </TableCell>
-                    <TableCell className="text-sm align-top max-w-[14rem]">
+                    <TableCell className="text-sm align-top max-w-[18rem]">
                       <div className="truncate" title={displayCompany ?? ""}>
                         {displayCompany ?? "-"}
                       </div>
+                      {(c.co_company_contacts?.length ?? 0) > 0 && (
+                        <div className="text-[11px] text-zinc-500 mt-0.5 leading-tight">
+                          <span className="font-medium text-zinc-600">also at this company:</span>{" "}
+                          {c.co_company_contacts!.map((cc, i) => (
+                            <span key={cc.id}>
+                              {i > 0 && ", "}
+                              <span title={`${cc.email}${cc.event_name ? ` · ${cc.event_name}` : ""} · ${cc.follow_up_status}`}>
+                                {toProperCase(cc.name ?? cc.email.split("@")[0])}
+                                <span className="text-zinc-400">
+                                  {" "}({cc.event_name ? cc.event_name.split(" ")[0] : "no event"}, {cc.follow_up_status})
+                                </span>
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </TableCell>
-                    <TableCell className="text-xs align-top max-w-[13rem]">
+                    <TableCell className="text-xs align-top max-w-[14rem]">
                       {isSynthesisedEmail ? (
                         <span className="text-zinc-400 italic">(missing)</span>
                       ) : (
-                        <span className="truncate block" title={c.email}>
+                        <span className="truncate block font-mono text-[11px]" title={c.email}>
                           {c.email}
                         </span>
+                      )}
+                      {/* Show conflicting colleague emails inline so the operator can see why a bulk-assign would collide */}
+                      {(c.co_company_contacts?.some((cc) => cc.email === c.email) ?? false) && (
+                        <div className="text-[10px] text-amber-700 mt-0.5">
+                          shared mailbox with colleague
+                        </div>
                       )}
                     </TableCell>
                     <TableCell className="align-top">
