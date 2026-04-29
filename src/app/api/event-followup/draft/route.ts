@@ -37,9 +37,29 @@ const REP_FIRST_NAMES: Record<string, string> = {
   "bruna.natale@cortenlogistics.com": "Bruna",
 };
 
+const REP_NAME_TO_EMAIL: Record<string, string> = {
+  Rob: "rob.donald@cortenlogistics.com",
+  Sam: "sam.yauner@cortenlogistics.com",
+  Bruna: "bruna.natale@cortenlogistics.com",
+};
+
+/**
+ * Pick the sending rep email from the met_by array. Handles both:
+ *   - Raw Airtable values: ["Rob","Bruna","GKF Directory","Business Card"]
+ *   - Legacy email-only values from earlier imports: ["rob.donald@cortenlogistics.com"]
+ *
+ * Returns the first person it can resolve, falling back to Rob if nothing
+ * usable is in the array.
+ */
 function pickRep(metBy: string[] | null | undefined): string {
-  if (metBy && metBy.length > 0) return metBy[0];
-  // Fallback: default to Rob if no rep was tagged on the contact.
+  if (metBy && metBy.length > 0) {
+    for (const v of metBy) {
+      if (REP_NAME_TO_EMAIL[v]) return REP_NAME_TO_EMAIL[v];
+      if (v.includes("@") && REP_FIRST_NAMES[v.toLowerCase()]) {
+        return v.toLowerCase();
+      }
+    }
+  }
   return "rob.donald@cortenlogistics.com";
 }
 
@@ -47,11 +67,16 @@ interface ContactRow {
   id: number;
   email: string;
   name: string | null;
+  title: string | null;
   company: string | null;
-  meeting_notes: string | null;
+  company_type: string | null;
   company_info: string | null;
+  country: string | null;
+  region: string | null;
+  meeting_notes: string | null;
   met_by: string[] | null;
   internal_cc: string | null;
+  tier: number | null;
   follow_up_status: string;
   event_id: number | null;
   events: { name: string; location: string | null; start_date: string } | null;
@@ -64,7 +89,7 @@ async function loadContact(contactId: number): Promise<ContactRow | null> {
   const { data: contact, error } = await supabase
     .from("event_contacts")
     .select(
-      "id, email, name, company, meeting_notes, company_info, met_by, internal_cc, follow_up_status, event_id",
+      "id, email, name, title, company, company_type, company_info, country, region, meeting_notes, met_by, internal_cc, tier, follow_up_status, event_id",
     )
     .eq("id", contactId)
     .maybeSingle();
@@ -120,14 +145,19 @@ async function draftOne(contactId: number, force: boolean): Promise<{
   const input: DraftInput = {
     contact_id: contact.id,
     contact_name: contact.name,
-    company: contact.company,
     contact_email: contact.email,
-    meeting_notes: contact.meeting_notes,
+    title: contact.title,
+    company: contact.company,
+    company_type: contact.company_type,
     company_info: contact.company_info,
+    country: contact.country,
+    region: contact.region,
+    meeting_notes: contact.meeting_notes,
+    met_by_raw: contact.met_by ?? [],
     event_name: contact.events.name,
     event_location: contact.events.location,
     event_start: contact.events.start_date,
-    tier: null, // tier loaded separately below
+    tier: contact.tier,
     rep_email: repEmail,
     rep_first_name: repFirstName,
     cc_emails: ccEmails,

@@ -75,13 +75,42 @@ function escapeRegExp(value: string): string {
 }
 
 /**
+ * Verb stems whose conjugations should also be banned. Adding the bare
+ * verb to voice_rules implicitly bans -s / -ed / -ing / -er forms via this
+ * stem-aware regex.
+ *
+ * Maps stem -> regex tail. The tail captures common English verb endings
+ * without false-matching nouns that share a prefix (e.g. 'leveraging' yes,
+ * 'lever' alone is fine - no e.g. 'leverage' in the noun sense).
+ */
+const VERB_STEM_TAIL = "(?:e|es|ed|ing|er)?";
+
+function isLikelyVerbStem(pattern: string): boolean {
+  // Heuristic: single-token, all lowercase, no spaces or punctuation.
+  // Avoids munging multi-word phrases or hyphenated compounds.
+  return /^[a-z]+$/.test(pattern);
+}
+
+/**
  * Build a RegExp for a rule. Single-word patterns use word boundaries to
  * avoid false positives inside longer words. Multi-word phrases and
  * formatting characters match as substrings.
+ *
+ * For banned_word entries that look like verb stems, we also catch the
+ * conjugations: 'dive' catches 'diving', 'dives', 'dived'. 'delve' catches
+ * 'delving', 'delves'. 'leverage' catches 'leveraging', 'leveraged'.
  */
 function patternToRegex(rule: VoiceRule): RegExp {
   const isSingleWord =
     rule.rule_type === "banned_word" && /^\S+$/.test(rule.pattern);
+  if (isSingleWord && isLikelyVerbStem(rule.pattern)) {
+    // Strip a trailing 'e' if present so the regex tail can re-add it.
+    // 'dive' -> 'div', tail '(?:e|es|ed|ing|er)?' -> matches dive/dives/dived/diving.
+    const stem = rule.pattern.endsWith("e")
+      ? rule.pattern.slice(0, -1)
+      : rule.pattern;
+    return new RegExp(`\\b${escapeRegExp(stem)}${VERB_STEM_TAIL}\\b`, "gi");
+  }
   const escaped = escapeRegExp(rule.pattern);
   const body = isSingleWord ? `\\b${escaped}\\b` : escaped;
   return new RegExp(body, "gi");

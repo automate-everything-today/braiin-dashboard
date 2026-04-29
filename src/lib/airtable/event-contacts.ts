@@ -238,11 +238,12 @@ async function buildRows(records: AirtableRecord[]): Promise<{
       continue;
     }
 
+    // Keep met_by RAW so the LLM sees the full mix: ["Rob","Sam","GKF
+    // Directory","Business Card"]. The draft generator distinguishes people
+    // (rep) from sources (where the contact came from). This is critical
+    // signal - a "GKF Directory" sourcing means we did NOT meet them in
+    // person and the email needs to be written accordingly.
     const metByRaw = asStringArray(f["Met By"]);
-    const metByPeople = metByRaw.filter((v) => PEOPLE_VALUES.has(v));
-    const metByEmails = metByPeople
-      .map((p) => METBY_NAME_TO_EMAIL[p])
-      .filter((e): e is string => Boolean(e));
 
     const baseRow = {
       airtable_record_id: rec.id,
@@ -254,7 +255,7 @@ async function buildRows(records: AirtableRecord[]): Promise<{
       website: asString(f["Website"]),
       country: asString(f["Country"]),
       region: asString(f["Region"]),
-      met_by: metByEmails,
+      met_by: metByRaw,
       internal_cc: asString(f["Internal CC"]),
       contact_role: mapContactRole(f["Contact Role"]),
       is_lead_contact: asBoolean(f["Lead Contact"]),

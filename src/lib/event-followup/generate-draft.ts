@@ -31,10 +31,16 @@ const MAX_REGENERATE_RETRIES = 2;
 export interface DraftInput {
   contact_id: number;
   contact_name: string | null;
-  company: string | null;
   contact_email: string;
-  meeting_notes: string | null;
+  title: string | null;
+  company: string | null;
+  company_type: string | null;
   company_info: string | null;
+  country: string | null;
+  region: string | null;
+  meeting_notes: string | null;
+  /** Multi-select Airtable values like ["Rob","Sam","GKF Directory","Business Card"] */
+  met_by_raw: string[];
   event_name: string;
   event_location: string | null;
   event_start: string;
@@ -109,16 +115,18 @@ function repVoice(repEmail: string): string {
 const META_RULES = `
 META-RULES (apply universally - never violate):
 
-1. NEVER use em-dash (—) or en-dash (–). Use a standard hyphen (-) or full stop or comma.
+1. NEVER use em-dash or en-dash. Use a standard hyphen (-), full stop, or comma.
 2. NEVER open with 'I hope this email finds you well' or any variant.
 3. NEVER use 'just wanted to', 'just checking in', 'just thought I'd' - drop the apologetic 'just'.
-4. NEVER use 'circle back', 'touch base', 'leverage', 'unlock', 'seamlessly', 'delve', 'synergy', or any other LinkedIn cringe term. Voice rules table below has the full list.
-5. NEVER claim 'best-in-class', 'world-class', 'cutting-edge', 'global reach + local expertise'. Show with specifics instead.
-6. ALWAYS prefer specifics over abstractions. Name places, name lanes, name numbers, name dates.
-7. ALWAYS reference the actual conversation that happened at the conference - meeting notes are gold. Don't write a generic follow-up.
-8. ALWAYS sign off in the rep's voice (see REP'S VOICE above).
-9. ALWAYS use a normal hyphen (-) for inline asides, not em-dash.
-10. Keep it short. Tier-A: ~3 paragraphs. Tier-B: 2 paragraphs. Tier-C: 'good to meet, here's our card' - 3 lines.
+4. NEVER use 'circle back', 'touch base', 'leverage', 'unlock', 'seamlessly', 'delve', 'synergy', or any LinkedIn cringe term. Voice rules table below has the full list. This includes verb forms: 'diving', 'dives', 'delving', 'delves', 'leveraging' all banned.
+5. NEVER claim 'best-in-class', 'world-class', 'cutting-edge', 'global reach + local expertise'. Show with specifics.
+6. NEVER hedge or apologise about uncertainty. Do NOT write 'apologies for the uncertainty', 'I'm not sure if', 'I cannot confirm', 'whether we connected at all', 'if my colleague already followed up'. The contact is in our follow-up list because we MET them and we ARE writing on purpose. Be confident.
+7. NEVER write 'before diving into specifics', 'before we get into the details' or similar throat-clearing. Get to the point.
+8. ALWAYS prefer specifics over abstractions. Name places, lanes, numbers, dates.
+9. ALWAYS reference the conversation at the conference IF meeting notes were captured. Use them as source material - quote phrases, mention the specific cargo or lane discussed, build on what was said.
+10. WHEN meeting notes are empty: write a clean, confident 3-line note. "Good to meet you at [event] - [one specific thing relevant to their company / country / role]. If there's a specific lane or service you're working on, send it through and we will take a look." NEVER apologise, NEVER hedge, NEVER ask which colleague met them.
+11. ALWAYS sign off in the rep's voice (see REP'S VOICE).
+12. Tier-A: ~3 paragraphs with specific value prop tied to their role/lane. Tier-B: 2 paragraphs. Tier-C / no-meeting-notes: 3-4 lines max.
 `;
 
 /**
@@ -181,29 +189,65 @@ function buildUserPrompt(input: DraftInput): string {
         : "Tier-C contact (rating 4-5): brief 'good to meet' note, 3-4 lines max."
     : "No tier set - default to a solid 2-paragraph warm follow-up.";
 
+  // The Met By field on Airtable mixes people (Rob/Sam/Bruna) with sources
+  // ("GKF Directory", "Business Card"). Surface BOTH so the LLM understands
+  // how the contact was acquired and writes accordingly.
+  const peopleMet = input.met_by_raw.filter((v) =>
+    ["Rob", "Sam", "Bruna"].includes(v),
+  );
+  const sourceTags = input.met_by_raw.filter((v) =>
+    !["Rob", "Sam", "Bruna"].includes(v),
+  );
+
   const lines: string[] = [];
-  lines.push(`CONTACT NAME: ${input.contact_name ?? "(unknown - use a generic warm opener)"}`);
-  lines.push(`COMPANY: ${input.company ?? "(unknown)"}`);
-  lines.push(`EVENT: ${input.event_name}${input.event_location ? ` (${input.event_location})` : ""}`);
-  lines.push(`EVENT DATE: ${input.event_start.split("T")[0]}`);
-  lines.push(`SENDING REP: ${input.rep_first_name} (${input.rep_email})`);
+  lines.push("=== CONTACT ===");
+  lines.push(`Name: ${input.contact_name ?? "(unknown - skip the personal greeting, use 'Hi there')"}`);
+  if (input.title) lines.push(`Title: ${input.title}`);
+  lines.push(`Company: ${input.company ?? "(unknown)"}`);
+  if (input.company_type) lines.push(`Company type: ${input.company_type}`);
+  if (input.country) lines.push(`Country: ${input.country}`);
+  if (input.region) lines.push(`Region: ${input.region}`);
+  lines.push(`Email: ${input.contact_email}`);
   lines.push("");
-  lines.push(tierGuidance);
+
+  lines.push("=== EVENT ===");
+  lines.push(`${input.event_name}${input.event_location ? ` (${input.event_location})` : ""}, ${input.event_start.split("T")[0]}`);
   lines.push("");
-  if (input.meeting_notes) {
-    lines.push("MEETING NOTES (what was discussed at the booth - WEAVE THIS INTO THE EMAIL, don't ignore it):");
-    lines.push(input.meeting_notes);
-    lines.push("");
-  } else {
-    lines.push("MEETING NOTES: (none captured - keep follow-up generic but warm)");
-    lines.push("");
+
+  lines.push("=== HOW WE GOT THIS CONTACT ===");
+  if (peopleMet.length > 0) {
+    lines.push(`Met in person by: ${peopleMet.join(", ")}.`);
   }
+  if (sourceTags.includes("GKF Directory")) {
+    lines.push(`Sourced from the GKF/ULN member directory${peopleMet.length === 0 ? " (we did NOT meet them in person)" : ""}.`);
+  }
+  if (sourceTags.includes("Business Card")) {
+    lines.push("Card collected at the booth.");
+  }
+  if (peopleMet.length === 0 && sourceTags.length === 0) {
+    lines.push("Source unclear. Treat as warm-network outreach, not a person-to-person follow-up.");
+  }
+  lines.push("");
+
+  lines.push("=== CONVERSATION CONTEXT ===");
+  if (input.meeting_notes) {
+    lines.push("Meeting notes (what was actually discussed - lean into this, quote phrases, build on the specific lane/cargo mentioned):");
+    lines.push(input.meeting_notes);
+  } else {
+    lines.push("No meeting notes captured. Do NOT pretend we had a deep conversation. Do NOT hedge or apologise. Write a confident short 'good to meet you at [event]' opener, ground it in something REAL from the contact data above (their country, role, or company type), and close with a direct 'send any active lanes through and we'll take a look'.");
+  }
+  lines.push("");
+
   if (input.company_info) {
-    lines.push("COMPANY CONTEXT (for awareness, don't quote verbatim):");
+    lines.push("=== COMPANY BACKGROUND (do not quote verbatim, use as awareness only) ===");
     lines.push(input.company_info);
     lines.push("");
   }
-  lines.push(`Write the email as ${input.rep_first_name}. Sign off with their first name. Output JSON only.`);
+
+  lines.push(tierGuidance);
+  lines.push("");
+  lines.push(`Write the email as ${input.rep_first_name} (signing off with first name only).`);
+  lines.push("Output JSON only - no preamble, no markdown.");
   return lines.join("\n");
 }
 
