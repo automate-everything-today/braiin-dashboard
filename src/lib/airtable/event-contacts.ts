@@ -618,6 +618,42 @@ async function buildAndPersistRows(
     }
 
     // Batch upsert normal rows for this chunk.
+    // Dedupe within the chunk by (email, event_id) - Postgres ON CONFLICT DO
+    // UPDATE rejects a chunk that touches the same conflict-target twice.
+    // This happens when two Airtable records share an email AND share an
+    // event tag (e.g. shared info@ mailbox both at Intermodal). Keep the
+    // last occurrence (most-recently mapped) and audit the dropped ones.
+    const chunkSeen = new Map<string, number>();
+    const dedupedRows: typeof normalRows = [];
+    const dedupedMeta: typeof normalRowMeta = [];
+    for (let i = 0; i < normalRows.length; i++) {
+      const r = normalRows[i] as { email?: string; event_id?: number };
+      const key = `${r.email}:${r.event_id}`;
+      if (chunkSeen.has(key)) {
+        const existingIdx = chunkSeen.get(key)!;
+        // Replace the earlier occurrence; audit the displaced one as merged.
+        const displacedMeta = dedupedMeta[existingIdx];
+        auditRows.push({
+          airtable_record_id: displacedMeta.airtableRecordId,
+          result: `merged_duplicate:same_email_event`,
+          fields_present: displacedMeta.presentFields,
+          fields_landed: [],
+          rules_snapshot: opts.snapshot.raw,
+          run_id: opts.runId,
+        });
+        dedupedRows[existingIdx] = normalRows[i];
+        dedupedMeta[existingIdx] = normalRowMeta[i];
+      } else {
+        chunkSeen.set(key, dedupedRows.length);
+        dedupedRows.push(normalRows[i]);
+        dedupedMeta.push(normalRowMeta[i]);
+      }
+    }
+    normalRows.length = 0;
+    normalRows.push(...dedupedRows);
+    normalRowMeta.length = 0;
+    normalRowMeta.push(...dedupedMeta);
+
     if (normalRows.length > 0) {
       const { error: upsertError, count } = await supabase
         .from("event_contacts")
